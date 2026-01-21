@@ -107,10 +107,15 @@ class LocalDownloader(Downloader, ABC):
         """
         处理本地文件路径，返回音频元信息
         """
+        original_upload_url: Optional[str] = None
         if video_url.startswith('/uploads'):
+            original_upload_url = video_url.replace("\\", "/")
             project_root = os.getcwd()
             video_url = os.path.join(project_root, video_url.lstrip('/'))
             video_url = os.path.normpath(video_url)
+        elif "/uploads/" in video_url.replace("\\", "/"):
+            normalized = video_url.replace("\\", "/")
+            original_upload_url = f"/uploads/{normalized.split('/uploads/')[-1]}"
 
         if not os.path.exists(video_url):
             raise FileNotFoundError(f"本地文件不存在: {video_url}")
@@ -131,7 +136,9 @@ class LocalDownloader(Downloader, ABC):
             platform="local",
             video_id=title,
             raw_info={
-                'path':  file_path
+                'path': file_path,
+                'webpage_url': original_upload_url or "",
+                'video_path': video_url.replace("\\", "/"),
             },
-            video_path=None
+            video_path=video_url.replace("\\", "/")
         )

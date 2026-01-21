@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { delete_task, generateNote } from '@/services/note.ts'
+import { delete_task, generateNote, getAllTasks } from '@/services/note.ts'
 import { v4 as uuidv4 } from 'uuid'
 import toast from 'react-hot-toast'
 
 
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILD'
+export type TaskStatus = 'PENDING' | 'PARSING' | 'DOWNLOADING' | 'TRANSCRIBING' | 'SUMMARIZING' | 'FORMATTING' | 'SAVING' | 'SUCCESS' | 'FAILED'
 
 export interface AudioMeta {
   cover_url: string
@@ -39,11 +39,12 @@ export interface Markdown {
 
 export interface Task {
   id: string
-  markdown: string|Markdown [] //为了兼容之前的笔记
+  markdown: string | Markdown[] //为了兼容之前的笔记
   transcript: Transcript
   status: TaskStatus
   audioMeta: AudioMeta
   createdAt: string
+  platform: string
   formData: {
     video_url: string
     link: undefined | boolean
@@ -52,19 +53,23 @@ export interface Task {
     quality: string
     model_name: string
     provider_id: string
+    style?: string
+    prompt?: string
+    summary_prompt?: string
   }
 }
 
 interface TaskStore {
   tasks: Task[]
   currentTaskId: string | null
-  addPendingTask: (taskId: string, platform: string) => void
+  addPendingTask: (taskId: string, platform: string, formData: any) => void
   updateTaskContent: (id: string, data: Partial<Omit<Task, 'id' | 'createdAt'>>) => void
   removeTask: (id: string) => void
   clearTasks: () => void
   setCurrentTask: (taskId: string | null) => void
   getCurrentTask: () => Task | null
-  retryTask: (id: string) => void
+  retryTask: (id: string, payload?: any) => void
+  fetchTasks: () => Promise<void>
 }
 
 export const useTaskStore = create<TaskStore>()(
@@ -106,51 +111,51 @@ export const useTaskStore = create<TaskStore>()(
         })),
 
       updateTaskContent: (id, data) =>
-          set(state => ({
-            tasks: state.tasks.map(task => {
-              if (task.id !== id) return task
+        set(state => ({
+          tasks: state.tasks.map(task => {
+            if (task.id !== id) return task
 
-              if (task.status === 'SUCCESS' && data.status === 'SUCCESS') return task
+            if (task.status === 'SUCCESS' && data.status === 'SUCCESS') return task
 
-              // 如果是 markdown 字符串，封装为版本
-              if (typeof data.markdown === 'string') {
-                const prev = task.markdown
-                const newVersion: Markdown = {
-                  ver_id: `${task.id}-${uuidv4()}`,
-                  content: data.markdown,
-                  style: task.formData.style || '',
-                  model_name: task.formData.model_name || '',
-                  created_at: new Date().toISOString(),
-                }
-
-                let updatedMarkdown: Markdown[]
-                if (Array.isArray(prev)) {
-                  updatedMarkdown = [newVersion, ...prev]
-                } else {
-                  updatedMarkdown = [
-                    newVersion,
-                    ...(typeof prev === 'string' && prev
-                        ? [{
-                          ver_id: `${task.id}-${uuidv4()}`,
-                          content: prev,
-                          style: task.formData.style || '',
-                          model_name: task.formData.model_name || '',
-                          created_at: new Date().toISOString(),
-                        }]
-                        : []),
-                  ]
-                }
-
-                return {
-                  ...task,
-                  ...data,
-                  markdown: updatedMarkdown,
-                }
+            // 如果是 markdown 字符串，封装为版本
+            if (typeof data.markdown === 'string') {
+              const prev = task.markdown
+              const newVersion: Markdown = {
+                ver_id: `${task.id}-${uuidv4()}`,
+                content: data.markdown,
+                style: task.formData.style || '',
+                model_name: task.formData.model_name || '',
+                created_at: new Date().toISOString(),
               }
 
-              return { ...task, ...data }
-            }),
-          })),
+              let updatedMarkdown: Markdown[]
+              if (Array.isArray(prev)) {
+                updatedMarkdown = [newVersion, ...prev]
+              } else {
+                updatedMarkdown = [
+                  newVersion,
+                  ...(typeof prev === 'string' && prev
+                    ? [{
+                      ver_id: `${task.id}-${uuidv4()}`,
+                      content: prev,
+                      style: task.formData.style || '',
+                      model_name: task.formData.model_name || '',
+                      created_at: new Date().toISOString(),
+                    }]
+                    : []),
+                ]
+              }
+
+              return {
+                ...task,
+                ...data,
+                markdown: updatedMarkdown,
+              }
+            }
+
+            return { ...task, ...data }
+          }),
+        })),
 
 
       getCurrentTask: () => {
@@ -159,15 +164,15 @@ export const useTaskStore = create<TaskStore>()(
       },
       retryTask: async (id: string, payload?: any) => {
 
-        if (!id){
+        if (!id) {
           toast.error('任务不存在')
           return
         }
         const task = get().tasks.find(task => task.id === id)
-        console.log('retry',task)
+        console.log('retry', task)
         if (!task) return
 
-        const newFormData = payload || task.formData
+        const newFormData = payload ? { ...task.formData, ...payload } : task.formData
         await generateNote({
           ...newFormData,
           task_id: id,
@@ -175,13 +180,13 @@ export const useTaskStore = create<TaskStore>()(
 
         set(state => ({
           tasks: state.tasks.map(t =>
-              t.id === id
-                  ? {
-                    ...t,
-                    formData: newFormData, // ✅ 显式更新 formData
-                    status: 'PENDING',
-                  }
-                  : t
+            t.id === id
+              ? {
+                ...t,
+                formData: newFormData, // ✅ 显式更新 formData
+                status: 'PENDING',
+              }
+              : t
           ),
         }))
       },
@@ -208,6 +213,48 @@ export const useTaskStore = create<TaskStore>()(
       clearTasks: () => set({ tasks: [], currentTaskId: null }),
 
       setCurrentTask: taskId => set({ currentTaskId: taskId }),
+
+      fetchTasks: async () => {
+        const serverTasks = await getAllTasks();
+        if (!serverTasks || !Array.isArray(serverTasks)) return;
+
+        set(state => {
+          const localTasks = [...state.tasks];
+
+          // Merge server tasks
+          serverTasks.forEach((st: any) => {
+            const existingIndex = localTasks.findIndex(t => t.id === st.id);
+            if (existingIndex !== -1) {
+              const existing = localTasks[existingIndex]
+              const mergedFormData = (() => {
+                const incoming = st?.formData
+                const current = existing?.formData
+                if (!incoming) return current
+                if (!current) return incoming
+
+                const incomingUrl = (incoming.video_url || '').trim()
+                const currentUrl = (current.video_url || '').trim()
+                if (!incomingUrl && currentUrl) {
+                  return { ...incoming, video_url: currentUrl }
+                }
+                return { ...current, ...incoming }
+              })()
+
+              // Update existing task (e.g. status changed, specific fields updated)
+              // Be careful not to overwrite local-only state if relevant, but server state is usually authority
+              localTasks[existingIndex] = { ...existing, ...st, formData: mergedFormData };
+            } else {
+              // Add new task from server (history)
+              localTasks.push(st);
+            }
+          });
+
+          // Sort by createdAt desc
+          localTasks.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+          return { tasks: localTasks };
+        });
+      },
     }),
     {
       name: 'task-storage',

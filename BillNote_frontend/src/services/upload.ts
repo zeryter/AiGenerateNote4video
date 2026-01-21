@@ -5,5 +5,5 @@ export const uploadFile = (formData: FormData) => {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
-  })
+  }) as Promise<any>
 }

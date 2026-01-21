@@ -2,6 +2,7 @@ import ProviderCard from '@/components/Form/modelForm/components/providerCard.ts
 import { Button } from '@/components/ui/button.tsx'
 import { useProviderStore } from '@/store/providerStore'
 import { useNavigate } from 'react-router-dom'
+import { Plus } from 'lucide-react'
 
 const Provider = () => {
   const providers = useProviderStore(state => state.provider)
@@ -11,20 +12,23 @@ const Provider = () => {
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className={'search flex gap-1 py-1.5'}>
+    <div className="flex flex-col h-full">
+      {/* Header with Title and Add Button */}
+      <div className="flex items-center justify-between px-4 py-4 border-b border-border/50">
+        <span className="text-sm font-semibold text-muted-foreground">模型供应商</span>
         <Button
-          type={'button'}
-          onClick={() => {
-            handleClick()
-          }}
-          className="w-full"
+          variant="ghost"
+          size="icon"
+          onClick={handleClick}
+          className="h-8 w-8 text-muted-foreground hover:text-primary"
+          title="添加模型供应商"
         >
-          添加模型供应商
+          <Plus size={18} />
         </Button>
       </div>
-      <div className="text-sm font-light">模型供应商列表</div>
-      <div>
+
+      {/* Provider List */}
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {providers &&
           providers.map((provider, index) => {
             return (
@@ -37,6 +41,14 @@ const Provider = () => {
               />
             )
           })}
+
+        {/* 'Add new' placeholder-like item at bottom if list is empty or just as specific action */}
+        {(!providers || providers.length === 0) && (
+          <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
+            <p className="text-xs mb-2">暂无模型</p>
+            <Button variant="outline" size="sm" onClick={handleClick}>添加供应商</Button>
+          </div>
+        )}
       </div>
     </div>
   )

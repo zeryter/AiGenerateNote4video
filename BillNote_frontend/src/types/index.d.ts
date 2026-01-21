@@ -3,12 +3,12 @@ export interface IProvider {
   name: string
   logo: string
   type: string
-  apiKey: string
+  apiKey?: string
   baseUrl: string
   enabled: number
 }
 export interface IResponse<T> {
   code: number
-  data:T
+  data: T
   msg: string
 }

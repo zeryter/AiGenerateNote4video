@@ -5,6 +5,7 @@ import {
   getProviderById,
   getProviderList,
   updateProviderById,
+  deleteProviderById,
 } from '@/services/model.ts'
 
 interface ProviderStore {
@@ -14,9 +15,10 @@ interface ProviderStore {
   getProviderById: (id: number) => IProvider | undefined
   getProviderList: () => IProvider[]
   fetchProviderList: () => Promise<void>
-  loadProviderById: (id: string) => Promise<void>
-  addNewProvider: (provider: IProvider) => Promise<void>
+  loadProviderById: (id: string) => Promise<any>
+  addNewProvider: (provider: IProvider) => Promise<string | undefined>
   updateProvider: (provider: IProvider) => Promise<void>
+  deleteProvider: (id: string) => Promise<void>
 }
 
 export const useProviderStore = create<ProviderStore>((set, get) => ({
@@ -38,19 +40,21 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
   // 设置整个 provider 列表
   setAllProviders: providers => set({ provider: providers }),
   loadProviderById: async (id: string) => {
-    const res:IResponse<IProvider> = await getProviderById(id)
+    // request interceptor unwraps response, so res is the data object
+    const res = await getProviderById(id) as any
 
-      const item = res
-      return {
-        id: item.id,
-        name: item.name,
-        logo: item.logo,
-        apiKey: item.api_key,
-        baseUrl: item.base_url,
-        type: item.type,
-        enabled: item.enabled,
-      }
+    // Ensure we handle the object correctly
+    const item = res.data || res // Fallback if backend wraps it further
 
+    return {
+      id: item.id,
+      name: item.name,
+      logo: item.logo,
+      apiKey: item.api_key,
+      baseUrl: item.base_url,
+      type: item.type,
+      enabled: item.enabled,
+    }
   },
   addNewProvider: async (provider: IProvider) => {
     const payload = {
@@ -60,19 +64,18 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
     }
     try {
       const res = await addProvider(payload)
-      if (res.data.code === 0) {
-        const item = res.data.data
-        console.log('Provider ', item)
+      // Request interceptor handles error codes, so if we get here, it's successful
+      console.log('Provider added:', res)
 
-        await get().fetchProviderList()
-        return  item
-      }
+      await get().fetchProviderList()
+      return res?.id // Return the ID of the new provider
     } catch (error) {
-      console.error('Error fetching provider:', error)
+      console.error('Error adding provider:', error)
+      throw error
     }
   },
   // 按 id 获取单个 provider
-  getProviderById: id => get().provider.find(p => p.id === id),
+  getProviderById: id => get().provider.find(p => String(p.id) === String(id)),
   updateProvider: async (provider: IProvider) => {
     try {
       const data = {
@@ -81,43 +84,43 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
         base_url: provider.baseUrl,
       }
       const res = await updateProviderById(data)
-      if (res.data.code === 0) {
-        const item = res.data.data
-        console.log('Provider ', item)
-        await get().fetchProviderList()
-      }
+      // Request interceptor handles error codes
+      console.log('Provider updated:', res)
+      await get().fetchProviderList()
     } catch (error) {
-      console.error('Error fetching provider:', error)
+      console.error('Error updating provider:', error)
+      throw error
+    }
+  },
+  deleteProvider: async (id: string) => {
+    try {
+      await deleteProviderById(id)
+      await get().fetchProviderList()
+    } catch (error) {
+      console.error('Error deleting provider:', error)
+      throw error
     }
   },
   getProviderList: () => get().provider,
   fetchProviderList: async () => {
     try {
-      const res  = await getProviderList()
+      const res = (await getProviderList()) as unknown as any[]
 
-        set({
-          provider: res.map(
-            (item: {
-              id: string
-              name: string
-              logo: string
-              api_key: string
-              base_url: string
-              type: string
-              enabled: number
-            }) => {
-              return {
-                id: item.id,
-                name: item.name,
-                logo: item.logo,
-                apiKey: item.api_key,
-                baseUrl: item.base_url,
-                type: item.type,
-                enabled: item.enabled,
-              }
+      set({
+        provider: res.map(
+          (item: any) => {
+            return {
+              id: item.id,
+              name: item.name,
+              logo: item.logo,
+              apiKey: item.api_key,
+              baseUrl: item.base_url,
+              type: item.type,
+              enabled: item.enabled,
             }
-          ),
-        })
+          }
+        ),
+      })
     } catch (error) {
       console.error('Error fetching provider list:', error)
     }

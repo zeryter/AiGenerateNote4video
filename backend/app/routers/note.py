@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel, validator, field_validator
 from dataclasses import asdict
 
-from app.db.video_task_dao import get_task_by_video
+from app.db.video_task_dao import get_task_by_video, get_all_tasks
 from app.enmus.exception import NoteErrorEnum
 from app.enmus.note_enums import DownloadQuality
 from app.exceptions.note import NoteError
@@ -65,6 +65,54 @@ class VideoRequest(BaseModel):
 
 NOTE_OUTPUT_DIR = os.getenv("NOTE_OUTPUT_DIR", "note_results")
 UPLOAD_DIR = "uploads"
+
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv", ".m4v"}
+
+
+def _infer_local_upload_url(audio_meta: dict) -> str:
+    if not isinstance(audio_meta, dict):
+        return ""
+
+    raw_info = audio_meta.get("raw_info") or {}
+    if isinstance(raw_info, dict):
+        for key in ("webpage_url", "upload_url", "video_url", "source_url", "original_url"):
+            v = raw_info.get(key)
+            if isinstance(v, str) and v.startswith("/uploads/") and v.strip():
+                return v
+
+        video_path = raw_info.get("video_path")
+        if isinstance(video_path, str):
+            normalized = video_path.replace("\\", "/")
+            if "/uploads/" in normalized:
+                return f"/uploads/{normalized.split('/uploads/')[-1]}"
+
+    video_path = audio_meta.get("video_path")
+    if isinstance(video_path, str):
+        normalized = video_path.replace("\\", "/")
+        if "/uploads/" in normalized:
+            return f"/uploads/{normalized.split('/uploads/')[-1]}"
+
+    candidate_path = audio_meta.get("file_path")
+    if not isinstance(candidate_path, str):
+        candidate_path = raw_info.get("path") if isinstance(raw_info, dict) else ""
+    if not isinstance(candidate_path, str) or not candidate_path:
+        return ""
+
+    normalized = candidate_path.replace("\\", "/")
+    if "/uploads/" not in normalized:
+        return ""
+
+    base_name = os.path.splitext(os.path.basename(normalized))[0]
+    uploads_dir = os.path.join(os.getcwd(), UPLOAD_DIR)
+    try:
+        for entry in os.listdir(uploads_dir):
+            entry_base, entry_ext = os.path.splitext(entry)
+            if entry_base == base_name and entry_ext.lower() in VIDEO_EXTENSIONS:
+                return f"/uploads/{entry}"
+    except Exception:
+        return ""
+
+    return ""
 
 
 def save_note_to_file(task_id: str, note):
@@ -244,3 +292,64 @@ async def image_proxy(request: Request, url: str):
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tasks")
+def list_tasks():
+    tasks_db = get_all_tasks()
+    results = []
+    
+    for t in tasks_db:
+        result_path = os.path.join(NOTE_OUTPUT_DIR, f"{t.task_id}.json")
+        status_path = os.path.join(NOTE_OUTPUT_DIR, f"{t.task_id}.status.json")
+        
+        task_data = {
+            "id": t.task_id,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "platform": t.platform,
+            "status": "PENDING"  # Default
+        }
+        
+        # Determine status
+        if os.path.exists(status_path):
+            try:
+                with open(status_path, "r", encoding="utf-8") as f:
+                    s_data = json.load(f)
+                    task_data["status"] = s_data.get("status", "PENDING")
+            except:
+                pass
+        # If no status file but result exists -> SUCCESS
+        elif os.path.exists(result_path):
+            task_data["status"] = "SUCCESS"
+
+        
+        # Load content if success (or if file exists)
+        if os.path.exists(result_path):
+            try:
+                with open(result_path, "r", encoding="utf-8") as f:
+                    content = json.load(f)
+                    if "audio_meta" in content:
+                        task_data["audioMeta"] = content["audio_meta"]
+                    
+                    if "transcript" in content:
+                        task_data["transcript"] = content["transcript"]
+                        
+                    if "markdown" in content:
+                        task_data["markdown"] = content["markdown"]
+                        
+                    video_url = content.get("audio_meta", {}).get("raw_info", {}).get("webpage_url", "")
+                    if t.platform == "local" and not video_url:
+                        video_url = _infer_local_upload_url(content.get("audio_meta", {}))
+
+                    task_data["formData"] = {
+                        "video_url": video_url,
+                        "platform": t.platform,
+                        "model_name": "", 
+                        "provider_id": "",
+                    }
+                    
+            except Exception as e:
+                logger.error(f"Error loading task file {t.task_id}: {e}")
+                
+        results.append(task_data)
+        
+    return R.success(results)

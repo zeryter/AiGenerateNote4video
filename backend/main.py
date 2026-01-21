@@ -61,6 +61,10 @@ app.add_middleware(
 register_exception_handlers(app)
 app.mount(static_path, StaticFiles(directory=static_dir), name="static")
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+note_output_dir = os.getenv("NOTE_OUTPUT_DIR", "note_results")
+if not os.path.exists(note_output_dir):
+    os.makedirs(note_output_dir)
+app.mount("/note_results", StaticFiles(directory=note_output_dir), name="note_results")
 
 
 

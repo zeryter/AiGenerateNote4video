@@ -9,11 +9,14 @@ interface AILogoProps {
 
 const AILogo = ({ name, style = 'Color', size = 24 }: AILogoProps) => {
   const Icon = Icons[name as keyof typeof Icons]
-  if (!Icon) {
-    console.error(`❌ 图标组件不存在: ${name}`)
+
+  if (name === 'custom' || !Icon) {
+    if (name !== 'custom') {
+      console.warn(`⚠️ 图标组件不存在: ${name}, 使用默认图标`)
+    }
     return (
-      <span style={{ fontSize: size }}>
-        <img src={CustomLogo} alt="CustomLogo" style={{ width: size, height: size }} />
+      <span style={{ fontSize: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+        <img src={CustomLogo} alt="CustomLogo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
       </span>
     )
   }

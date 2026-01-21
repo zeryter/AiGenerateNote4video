@@ -101,7 +101,9 @@ export const useModelStore = create<ModelStore>()(
       try {
         const res = await addModel({ provider_id: providerId, model_name: modelId })
 
-        if (res.code === 0) {
+        // Handle different response structures
+        const code = res?.code ?? res?.data?.code
+        if (code === 0) {
           console.log('新增模型成功:', modelId)
           set((state) => ({
             models: [
@@ -117,7 +119,7 @@ export const useModelStore = create<ModelStore>()(
             ],
           }))
         } else {
-          console.error('新增模型失败', res.msg)
+          console.error('新增模型失败', res?.msg || res?.data?.msg)
         }
       } catch (error) {
         console.error('添加模型出错', error)

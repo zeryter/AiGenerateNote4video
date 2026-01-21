@@ -19,7 +19,9 @@ class ProviderRequest(BaseModel):
     type: str
 
 class TestRequest(BaseModel):
-    id: str
+    id: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 class ProviderUpdateRequest(BaseModel):
     id: str
     name: Optional[str] = None
@@ -88,5 +90,15 @@ def update_provider(data: ProviderUpdateRequest):
 
 @router.post('/connect_test')
 def gpt_connect_test(data: TestRequest):
-    ModelService().connect_test(data.id)
+    print(f"DEBUG: connect_test received: id={data.id}, base_url={data.base_url}, api_key={data.api_key}")
+    # Pass all available data to the service
+    ModelService().connect_test(id=data.id, api_key=data.api_key, base_url=data.base_url)
     return R.success(msg='连接成功')
+
+@router.get("/delete_provider/{id}")
+def delete_provider(id: str):
+    try:
+        ProviderService.delete_provider(id)
+        return R.success(msg='删除模型供应商成功')
+    except Exception as e:
+        return R.error(msg=str(e))

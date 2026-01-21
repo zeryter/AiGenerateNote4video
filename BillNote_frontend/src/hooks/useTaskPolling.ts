@@ -6,8 +6,6 @@ import toast from 'react-hot-toast'
 export const useTaskPolling = (interval = 3000) => {
   const tasks = useTaskStore(state => state.tasks)
   const updateTaskContent = useTaskStore(state => state.updateTaskContent)
-  const updateTaskStatus = useTaskStore(state => state.updateTaskStatus)
-  const removeTask = useTaskStore(state => state.removeTask)
 
   const tasksRef = useRef(tasks)
 
@@ -25,7 +23,7 @@ export const useTaskPolling = (interval = 3000) => {
       for (const task of pendingTasks) {
         try {
           console.log('🔄 正在轮询任务：', task.id)
-          const res = await get_task_status(task.id)
+          const res: any = await get_task_status(task.id)
           const { status } = res
 
           if (status && status !== task.status) {
@@ -46,10 +44,7 @@ export const useTaskPolling = (interval = 3000) => {
             }
           }
         } catch (e) {
-          console.error('❌ 任务轮询失败：', e)
-          // toast.error(`生成失败 ${e.message || e}`)
-          updateTaskContent(task.id, { status: 'FAILED' })
-          // removeTask(task.id)
+          console.error('❌ 任务轮询网络异常（暂不处理，等待重试）：', e)
         }
       }
     }, interval)

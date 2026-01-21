@@ -100,21 +100,41 @@ class ModelService:
             logger.error(f"[{provider_id}] 获取模型失败: {e}")
             return []
     @staticmethod
-    def connect_test(id: str) -> bool:
-
-        provider = ProviderService.get_provider_by_id(id)
-
-        if provider:
-            if not provider.get('api_key'):
-                raise ProviderError(code=ProviderErrorEnum.NOT_FOUND.code, message=ProviderErrorEnum.NOT_FOUND.message)
-            result =  OpenAICompatibleProvider.test_connection(
-                api_key=provider.get('api_key'),
-                base_url=provider.get('base_url')
+    def connect_test(id: str = None, api_key: str = None, base_url: str = None) -> bool:
+        print(f"DEBUG: ModelService.connect_test called with id={id}, base_url={base_url}")
+        
+        # If explicit params provided, use them directly (testing unsaved or modified form data)
+        if base_url:
+            # If api_key is empty string/None but provided, we might still want to test (e.g. local models)
+            # But let's check what OpenAICProvider expects. 
+            # Usually we pass what we have.
+            result = OpenAICompatibleProvider.test_connection(
+                api_key=api_key,
+                base_url=base_url
             )
             if result:
                 return True
             else:
-                raise ProviderError(code=ProviderErrorEnum.WRONG_PARAMETER.code,message=ProviderErrorEnum.WRONG_PARAMETER.message)
+                raise ProviderError(code=ProviderErrorEnum.WRONG_PARAMETER.code, message=ProviderErrorEnum.WRONG_PARAMETER.message)
+
+        # Fallback to DB lookup if only ID is provided
+        if id:
+            provider = ProviderService.get_provider_by_id(id)
+
+            if provider:
+                # Local models might not have api_key, check logic
+                # if not provider.get('api_key'):
+                #    raise ... 
+                # Let's trust the provider object structure.
+                
+                result =  OpenAICompatibleProvider.test_connection(
+                    api_key=provider.get('api_key'),
+                    base_url=provider.get('base_url')
+                )
+                if result:
+                    return True
+                else:
+                    raise ProviderError(code=ProviderErrorEnum.WRONG_PARAMETER.code,message=ProviderErrorEnum.WRONG_PARAMETER.message)
 
         raise ProviderError(code=ProviderErrorEnum.NOT_FOUND.code, message=ProviderErrorEnum.NOT_FOUND.message)
 

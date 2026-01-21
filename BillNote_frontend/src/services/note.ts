@@ -17,12 +17,9 @@ export const generateNote = async (data: {
 }) => {
   try {
     console.log('generateNote', data)
-    const response = await request.post('/generate_note', data)
+    const response = await request.post('/generate_note', data) as any
 
     if (!response) {
-      if (response.data.msg) {
-        toast.error(response.data.msg)
-      }
       return null
     }
     toast.success('笔记生成任务已提交！')
@@ -41,7 +38,7 @@ export const generateNote = async (data: {
   }
 }
 
-export const delete_task = async ({ video_id, platform }) => {
+export const delete_task = async ({ video_id, platform }: { video_id: string, platform: string }) => {
   try {
     const data = {
       video_id,
@@ -50,8 +47,8 @@ export const delete_task = async ({ video_id, platform }) => {
     const res = await request.post('/delete_task', data)
 
 
-      toast.success('任务已成功删除')
-      return res
+    toast.success('任务已成功删除')
+    return res
   } catch (e) {
     toast.error('请求异常，删除任务失败')
     console.error('❌ 删除任务失败:', e)
@@ -66,10 +63,16 @@ export const get_task_status = async (task_id: string) => {
     return await request.get('/task_status/' + task_id)
   } catch (e) {
     console.error('❌ 请求出错', e)
-
-    // 错误提示
-    toast.error('笔记生成失败，请稍后重试')
-
     throw e // 抛出错误以便调用方处理
+  }
+}
+
+export const getAllTasks = async () => {
+  try {
+    return await request.get('/tasks')
+  } catch (e) {
+    console.error('❌ 获取任务列表失败', e)
+    // toast.error('获取历史记录失败')
+    return []
   }
 }
