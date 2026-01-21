@@ -22,6 +22,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 import httpx
 from app.enmus.task_status_enums import TaskStatus
+from app.db.video_tags_dao import get_video_tags
 
 # from app.services.downloader import download_raw_audio
 # from app.services.whisperer import transcribe_audio
@@ -225,9 +226,14 @@ def get_task_status(task_id: str):
             if os.path.exists(result_path):
                 with open(result_path, "r", encoding="utf-8") as rf:
                     result_content = json.load(rf)
+                audio_meta = result_content.get("audio_meta") or {}
+                video_id = audio_meta.get("video_id")
+                platform = audio_meta.get("platform")
+                tags = get_video_tags(platform, video_id) if platform and video_id else []
                 return R.success({
                     "status": status,
                     "result": result_content,
+                    "tags": tags,
                     "message": message,
                     "task_id": task_id
                 })
@@ -253,9 +259,14 @@ def get_task_status(task_id: str):
     if os.path.exists(result_path):
         with open(result_path, "r", encoding="utf-8") as f:
             result_content = json.load(f)
+        audio_meta = result_content.get("audio_meta") or {}
+        video_id = audio_meta.get("video_id")
+        platform = audio_meta.get("platform")
+        tags = get_video_tags(platform, video_id) if platform and video_id else []
         return R.success({
             "status": TaskStatus.SUCCESS.value,
             "result": result_content,
+            "tags": tags,
             "task_id": task_id
         })
 
@@ -294,7 +305,7 @@ async def image_proxy(request: Request, url: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/tasks")
-def list_tasks():
+def list_tasks(tags: Optional[str] = None, tags_match: str = "any"):
     tasks_db = get_all_tasks()
     results = []
     
@@ -335,6 +346,11 @@ def list_tasks():
                         
                     if "markdown" in content:
                         task_data["markdown"] = content["markdown"]
+
+                    audio_meta = content.get("audio_meta") or {}
+                    video_id = audio_meta.get("video_id")
+                    platform = t.platform or audio_meta.get("platform")
+                    task_data["tags"] = get_video_tags(platform, video_id) if platform and video_id else []
                         
                     video_url = content.get("audio_meta", {}).get("raw_info", {}).get("webpage_url", "")
                     if t.platform == "local" and not video_url:
@@ -352,4 +368,19 @@ def list_tasks():
                 
         results.append(task_data)
         
+    if tags:
+        requested = [t.strip() for t in tags.split(",") if t.strip()]
+        if requested:
+            match_all = tags_match.lower() == "all"
+            filtered = []
+            for item in results:
+                item_tags = set(item.get("tags") or [])
+                if match_all:
+                    if all(t in item_tags for t in requested):
+                        filtered.append(item)
+                else:
+                    if any(t in item_tags for t in requested):
+                        filtered.append(item)
+            results = filtered
+
     return R.success(results)

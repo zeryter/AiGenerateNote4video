@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useTaskStore } from '@/store/taskStore'
 import { get_task_status } from '@/services/note.ts'
 import toast from 'react-hot-toast'
+import { makeVideoKey, useTagStore } from '@/store/tagStore'
 
 export const useTaskPolling = (interval = 3000) => {
   const tasks = useTaskStore(state => state.tasks)
@@ -29,12 +30,18 @@ export const useTaskPolling = (interval = 3000) => {
           if (status && status !== task.status) {
             if (status === 'SUCCESS') {
               const { markdown, transcript, audio_meta } = res.result
+              const incomingTags = Array.isArray(res.tags) ? res.tags : []
+              const key = makeVideoKey(audio_meta?.platform, audio_meta?.video_id)
+              if (key && incomingTags.length > 0) {
+                useTagStore.getState().setTagsForKey(key, incomingTags)
+              }
               toast.success('笔记生成成功')
               updateTaskContent(task.id, {
                 status,
                 markdown,
                 transcript,
                 audioMeta: audio_meta,
+                tags: incomingTags.length > 0 ? incomingTags : undefined,
               })
             } else if (status === 'FAILED') {
               updateTaskContent(task.id, { status })

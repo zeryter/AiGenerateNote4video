@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { delete_task, generateNote, getAllTasks } from '@/services/note.ts'
 import { v4 as uuidv4 } from 'uuid'
 import toast from 'react-hot-toast'
+import { useTagStore } from '@/store/tagStore'
 
 
 export type TaskStatus = 'PENDING' | 'PARSING' | 'DOWNLOADING' | 'TRANSCRIBING' | 'SUMMARIZING' | 'FORMATTING' | 'SAVING' | 'SUCCESS' | 'FAILED'
@@ -45,6 +46,7 @@ export interface Task {
   audioMeta: AudioMeta
   createdAt: string
   platform: string
+  tags?: string[]
   formData: {
     video_url: string
     link: undefined | boolean
@@ -217,6 +219,8 @@ export const useTaskStore = create<TaskStore>()(
       fetchTasks: async () => {
         const serverTasks = await getAllTasks();
         if (!serverTasks || !Array.isArray(serverTasks)) return;
+
+        useTagStore.getState().hydrateFromTasks(serverTasks)
 
         set(state => {
           const localTasks = [...state.tasks];

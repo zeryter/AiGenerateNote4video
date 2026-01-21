@@ -1,8 +1,11 @@
 import { useNavigate, useLocation } from "react-router-dom";
-import { ArrowLeft, Sparkles, RefreshCw, ChevronDown, Copy, Check } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, Sparkles, RefreshCw, ChevronDown, Copy, Check, Tag, X, Pencil } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useProviderStore } from "@/store/providerStore";
 import { useModelStore } from "@/store/modelStore";
+import toast from "react-hot-toast";
+import { makeVideoKey, useTagStore } from "@/store/tagStore";
+import { setVideoTags } from "@/services/tags";
 
 interface WorkspaceHeaderProps {
     task: any;
@@ -17,6 +20,37 @@ export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, cop
     const location = useLocation();
     const backPath = location.state?.from || "/";
     const [showRetryOptions, setShowRetryOptions] = useState(false);
+
+    const videoKey = useMemo(() => {
+        return makeVideoKey(task?.audioMeta?.platform, task?.audioMeta?.video_id);
+    }, [task?.audioMeta?.platform, task?.audioMeta?.video_id]);
+
+    const tags = useTagStore((s) => (videoKey ? s.tagsByKey[videoKey] || [] : []));
+    const setTagsForKey = useTagStore((s) => s.setTagsForKey);
+    const [tagInput, setTagInput] = useState("");
+    const [editingTags, setEditingTags] = useState(false);
+    const saveTimerRef = useRef<number | null>(null);
+
+    const platformForTags = task?.audioMeta?.platform;
+    const videoIdForTags = task?.audioMeta?.video_id;
+
+    const scheduleSaveTags = (nextTags: string[]) => {
+        if (!platformForTags || !videoIdForTags) return;
+        if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = window.setTimeout(async () => {
+            try {
+                await setVideoTags(platformForTags, videoIdForTags, nextTags);
+            } catch (e: any) {
+                toast.error(e?.msg || e?.message || "标签保存失败");
+            }
+        }, 500);
+    };
+
+    useEffect(() => {
+        return () => {
+            if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+        };
+    }, []);
 
     // Provider/Model stores for retry
     const providers = useProviderStore((s) => s.provider);
@@ -42,6 +76,22 @@ export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, cop
         }
     };
 
+    const handleAddTag = () => {
+        const cleaned = tagInput.trim();
+        if (!cleaned || !videoKey) return;
+        const next = tags.includes(cleaned) ? tags : [...tags, cleaned];
+        setTagsForKey(videoKey, next);
+        scheduleSaveTags(next);
+        setTagInput("");
+    };
+
+    const handleRemoveTag = (t: string) => {
+        if (!videoKey) return;
+        const next = tags.filter((x) => x !== t);
+        setTagsForKey(videoKey, next);
+        scheduleSaveTags(next);
+    };
+
     return (
         <header className="h-14 border-b border-border/50 flex items-center justify-between px-4 bg-background/50 backdrop-blur-md z-20">
             <div className="flex items-center gap-3">
@@ -51,12 +101,73 @@ export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, cop
                 <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center text-primary">
                     <Sparkles size={18} />
                 </div>
-                <div className="flex flex-col">
+                <div className="flex flex-col min-w-0">
                     <span className="font-semibold text-sm truncate max-w-[300px]">
                         {task.audioMeta?.title || "BiliNote Workspace"}
                     </span>
                     <span className={`text-xs ${statusInfo.color}`}>{statusInfo.label}</span>
                 </div>
+                {videoKey && (
+                    <div className="flex items-center gap-2 ml-2 min-w-0 max-w-[40vw] overflow-x-auto">
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+                            <Tag size={14} />
+                        </div>
+                        <div className="flex items-center gap-1 min-w-0 flex-wrap">
+                            {tags.slice(0, 4).map((t) => (
+                                <span
+                                    key={t}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-border/50 bg-card/30 text-xs text-foreground/80"
+                                >
+                                    <span className="truncate max-w-[120px]">{t}</span>
+                                    {editingTags && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleRemoveTag(t)}
+                                            className="text-muted-foreground hover:text-foreground"
+                                            aria-label="删除标签"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    )}
+                                </span>
+                            ))}
+                            {tags.length > 4 && (
+                                <span className="text-xs text-muted-foreground">+{tags.length - 4}</span>
+                            )}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setEditingTags((v) => !v)}
+                            className="p-1.5 hover:bg-muted rounded-full transition-colors text-muted-foreground hover:text-foreground shrink-0"
+                            title={editingTags ? "完成" : "编辑标签"}
+                        >
+                            <Pencil size={14} />
+                        </button>
+                        {editingTags && (
+                            <div className="flex items-center gap-1">
+                                <input
+                                    value={tagInput}
+                                    onChange={(e) => setTagInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            handleAddTag();
+                                        }
+                                    }}
+                                    placeholder="添加标签"
+                                    className="w-28 h-7 px-2 rounded-lg bg-card/50 border border-border/50 text-xs focus:outline-none focus:border-primary/50"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleAddTag}
+                                    className="h-7 px-2 rounded-lg bg-primary text-primary-foreground text-xs hover:opacity-90"
+                                >
+                                    添加
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
             <div className="flex items-center gap-2">
                 {task.status === "FAILED" && (
