@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { Task } from '@/store/taskStore'
 
 export function makeVideoKey(platform?: string, videoId?: string) {
   if (!platform || !videoId) return ''
@@ -24,7 +25,7 @@ interface TagStore {
   tagsByKey: Record<string, string[]>
   setTagsForKey: (key: string, tags: string[]) => void
   getTagsForKey: (key: string) => string[]
-  hydrateFromTasks: (tasks: any[]) => void
+  hydrateFromTasks: (tasks: Task[]) => void
 }
 
 export const useTagStore = create<TagStore>()(
@@ -57,4 +58,3 @@ export const useTagStore = create<TagStore>()(
     { name: 'tag-storage' }
   )
 )
-

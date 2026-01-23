@@ -31,7 +31,7 @@ export function ModelSelector({ providerId }: ModelSelectorProps) {
     if (providerId) {
       loadModels(providerId)
     }
-  }, [providerId])
+  }, [providerId, loadModels])
 
   const handleSubmit = async () => {
     if (!selectedModel) {
@@ -42,7 +42,7 @@ export function ModelSelector({ providerId }: ModelSelectorProps) {
       setSubmitting(true)
       await addNewModel(providerId, selectedModel)
       toast.success('保存模型成功 🎉')
-    } catch (error) {
+    } catch {
       toast.error('保存失败')
     } finally {
       setSubmitting(false)

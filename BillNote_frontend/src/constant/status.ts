@@ -1,4 +1,5 @@
 export const statusMap: Record<string, { label: string; color: string }> = {
+    QUEUED: { label: "排队中", color: "text-yellow-500" },
     PENDING: { label: "排队中", color: "text-yellow-500" },
     PARSING: { label: "解析中", color: "text-blue-500" },
     DOWNLOADING: { label: "下载中", color: "text-blue-500" },

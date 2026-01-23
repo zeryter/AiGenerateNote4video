@@ -6,14 +6,17 @@ import toast from 'react-hot-toast'
 import { useTagStore } from '@/store/tagStore'
 
 
-export type TaskStatus = 'PENDING' | 'PARSING' | 'DOWNLOADING' | 'TRANSCRIBING' | 'SUMMARIZING' | 'FORMATTING' | 'SAVING' | 'SUCCESS' | 'FAILED'
+export type TaskStatus = 'QUEUED' | 'PENDING' | 'PARSING' | 'DOWNLOADING' | 'TRANSCRIBING' | 'SUMMARIZING' | 'FORMATTING' | 'SAVING' | 'SUCCESS' | 'FAILED'
+
+export type RawInfo = Record<string, unknown> | null
+export type RawData = Record<string, unknown> | null
 
 export interface AudioMeta {
   cover_url: string
   duration: number
   file_path: string
   platform: string
-  raw_info: any
+  raw_info: RawInfo
   title: string
   video_id: string
 }
@@ -27,7 +30,7 @@ export interface Segment {
 export interface Transcript {
   full_text: string
   language: string
-  raw: any
+  raw: RawData
   segments: Segment[]
 }
 export interface Markdown {
@@ -43,34 +46,43 @@ export interface Task {
   markdown: string | Markdown[] //为了兼容之前的笔记
   transcript: Transcript
   status: TaskStatus
+  statusMessage?: string
   audioMeta: AudioMeta
   createdAt: string
   platform: string
   tags?: string[]
-  formData: {
-    video_url: string
-    link: undefined | boolean
-    screenshot: undefined | boolean
-    platform: string
-    quality: string
-    model_name: string
-    provider_id: string
-    style?: string
-    prompt?: string
-    summary_prompt?: string
-  }
+  formData: TaskFormData
+}
+
+export interface TaskFormData {
+  video_url: string
+  link?: boolean
+  screenshot?: boolean
+  platform: string
+  quality: string
+  model_name: string
+  provider_id: string
+  style: string
+  prompt?: string
+  summary_prompt?: string
+  extras?: string
+  video_understanding?: boolean
+  video_understand?: boolean
+  video_interval?: number
+  grid_size: number[]
+  format: string[]
 }
 
 interface TaskStore {
   tasks: Task[]
   currentTaskId: string | null
-  addPendingTask: (taskId: string, platform: string, formData: any) => void
+  addPendingTask: (taskId: string, platform: string, formData: TaskFormData) => void
   updateTaskContent: (id: string, data: Partial<Omit<Task, 'id' | 'createdAt'>>) => void
   removeTask: (id: string) => void
   clearTasks: () => void
   setCurrentTask: (taskId: string | null) => void
   getCurrentTask: () => Task | null
-  retryTask: (id: string, payload?: any) => void
+  retryTask: (id: string, payload?: Partial<TaskFormData>) => void
   fetchTasks: () => Promise<void>
 }
 
@@ -80,14 +92,14 @@ export const useTaskStore = create<TaskStore>()(
       tasks: [],
       currentTaskId: null,
 
-      addPendingTask: (taskId: string, platform: string, formData: any) =>
+      addPendingTask: (taskId: string, platform: string, formData: TaskFormData) =>
 
         set(state => ({
           tasks: [
             {
               formData: formData,
               id: taskId,
-              status: 'PENDING',
+              status: 'QUEUED',
               markdown: '',
               platform: platform,
               transcript: {
@@ -164,7 +176,7 @@ export const useTaskStore = create<TaskStore>()(
         const currentTaskId = get().currentTaskId
         return get().tasks.find(task => task.id === currentTaskId) || null
       },
-      retryTask: async (id: string, payload?: any) => {
+      retryTask: async (id: string, payload?: Partial<TaskFormData>) => {
 
         if (!id) {
           toast.error('任务不存在')
@@ -186,7 +198,7 @@ export const useTaskStore = create<TaskStore>()(
               ? {
                 ...t,
                 formData: newFormData, // ✅ 显式更新 formData
-                status: 'PENDING',
+                status: 'QUEUED',
               }
               : t
           ),
@@ -206,8 +218,9 @@ export const useTaskStore = create<TaskStore>()(
         // 调用后端删除接口（如果找到了任务）
         if (task) {
           await delete_task({
-            video_id: task.audioMeta.video_id,
+            video_id: task.audioMeta?.video_id,
             platform: task.platform,
+            task_id: task.id,
           })
         }
       },
@@ -217,16 +230,17 @@ export const useTaskStore = create<TaskStore>()(
       setCurrentTask: taskId => set({ currentTaskId: taskId }),
 
       fetchTasks: async () => {
-        const serverTasks = await getAllTasks();
-        if (!serverTasks || !Array.isArray(serverTasks)) return;
+        const serverTasks = await getAllTasks()
+        if (!serverTasks || !Array.isArray(serverTasks)) return
 
-        useTagStore.getState().hydrateFromTasks(serverTasks)
+        const typedServerTasks = serverTasks as Task[]
+        useTagStore.getState().hydrateFromTasks(typedServerTasks)
 
         set(state => {
           const localTasks = [...state.tasks];
 
           // Merge server tasks
-          serverTasks.forEach((st: any) => {
+          typedServerTasks.forEach((st: Task) => {
             const existingIndex = localTasks.findIndex(t => t.id === st.id);
             if (existingIndex !== -1) {
               const existing = localTasks[existingIndex]

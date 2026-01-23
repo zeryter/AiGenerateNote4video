@@ -1,9 +1,17 @@
 import { motion } from "framer-motion";
 import { Settings, ChevronDown, FileText, Plus } from "lucide-react";
+import type { IProvider } from "@/types";
+
+type ModelListItem = {
+    id: string;
+    provider_id: string;
+    model_name: string;
+    created_at?: string;
+};
 
 interface TaskControlsProps {
-    providers: any[];
-    modelsForProvider: any[];
+    providers: IProvider[];
+    modelsForProvider: ModelListItem[];
     selectedProviderId: string;
     selectedModelName: string;
     selectedStyle: string;

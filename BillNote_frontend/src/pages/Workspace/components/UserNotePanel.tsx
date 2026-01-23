@@ -1,23 +1,53 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileText, Sparkles, PenLine, Eye } from "lucide-react";
 import MarkdownPreview from "@uiw/react-markdown-preview";
 import { formatTime } from "@/utils/mediaHelper";
+import toast from "react-hot-toast";
 
 interface UserNotePanelProps {
     myNote: string;
     onNoteChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
     getCurrentTime: () => number;
     onSeek: (time: number) => void;
+    isLocalVideo: boolean;
 }
 
-export default function UserNotePanel({ myNote, onNoteChange, getCurrentTime, onSeek }: UserNotePanelProps) {
+export default function UserNotePanel({ myNote, onNoteChange, getCurrentTime, onSeek, isLocalVideo }: UserNotePanelProps) {
     const [rightTab, setRightTab] = useState<"my_note" | "mindmap">("my_note");
     const [isMyNotePreview, setIsMyNotePreview] = useState(false);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (!e.ctrlKey || e.key.toLowerCase() !== "v") return;
+            if (rightTab !== "my_note") return;
+
+            const target = e.target as HTMLElement | null;
+            const tagName = target?.tagName?.toLowerCase();
+            const isEditable =
+                target?.isContentEditable ||
+                tagName === "textarea" ||
+                tagName === "input" ||
+                tagName === "select";
+
+            if (isEditable) return;
+            e.preventDefault();
+            setIsMyNotePreview((prev) => !prev);
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [rightTab]);
 
     const handleMyNoteKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         // Ctrl + t: Insert Timestamp
         if (e.ctrlKey && e.key === "t") {
             e.preventDefault();
+            if (!isLocalVideo) {
+                toast("URL 视频暂不支持自动时间戳，请手动记录");
+                return;
+            }
 
             const currentTime = getCurrentTime();
             const timeStr = formatTime(currentTime);
@@ -52,6 +82,10 @@ export default function UserNotePanel({ myNote, onNoteChange, getCurrentTime, on
             if (timePart) {
                 const seconds = parseInt(timePart, 10);
                 if (!isNaN(seconds)) {
+                    if (!isLocalVideo) {
+                        toast("URL 视频暂不支持自动跳转，请手动定位");
+                        return true;
+                    }
                     onSeek(seconds);
                     return true; // prevent default handled
                 }
@@ -88,7 +122,7 @@ export default function UserNotePanel({ myNote, onNoteChange, getCurrentTime, on
                         <button
                             onClick={() => setIsMyNotePreview(!isMyNotePreview)}
                             className="p-1 px-2 rounded hover:bg-muted/50 text-xs flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                            title={isMyNotePreview ? "切换到编辑模式" : "切换到预览模式"}
+                            title={isMyNotePreview ? "切换到编辑模式 (Ctrl + V)" : "切换到预览模式 (Ctrl + V)"}
                         >
                             {isMyNotePreview ? <PenLine size={12} /> : <Eye size={12} />}
                             <span>{isMyNotePreview ? "编辑" : "预览"}</span>
@@ -106,7 +140,7 @@ export default function UserNotePanel({ myNote, onNoteChange, getCurrentTime, on
                                         style={{ backgroundColor: "transparent", color: "inherit" }}
                                         wrapperElement={{ "data-color-mode": "dark" }}
                                         components={{
-                                            a: ({ node, ...props }) => {
+                                            a: (props) => {
                                                 return (
                                                     <a
                                                         {...props}
@@ -128,7 +162,7 @@ export default function UserNotePanel({ myNote, onNoteChange, getCurrentTime, on
                                 value={myNote}
                                 onChange={onNoteChange}
                                 onKeyDown={handleMyNoteKeyDown}
-                                placeholder="在此输入您的笔记... (Ctrl + t 插入当前视频时间戳)"
+                                placeholder="在此输入您的笔记... (本地视频 Ctrl + t 插入时间戳，Ctrl + V 切换预览)"
                                 className="w-full h-full bg-transparent p-4 resize-none focus:outline-none text-sm leading-relaxed text-foreground placeholder:text-muted-foreground font-mono"
                             />
                         )

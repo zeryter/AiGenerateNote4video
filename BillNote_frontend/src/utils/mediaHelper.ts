@@ -19,6 +19,7 @@ export function formatTime(seconds: number): string {
 
 export function getVideoUrl(url: string, platform?: string, filePath?: string): string {
     const BASE_URL = "http://localhost:8483";
+    const isVideoFilePath = (path: string) => /\.(mp4|mov|m4v|webm|mkv|avi|flv)$/i.test(path);
 
     // Helper to safely encode path
     const getEncodedUrl = (path: string) => {
@@ -38,6 +39,34 @@ export function getVideoUrl(url: string, platform?: string, filePath?: string): 
             console.error("Error constructing video URL:", e);
             return path;
         }
+    };
+
+    const buildFileUrl = (normalizedPath: string) => {
+        // Handle note_results (downloaded files)
+        if (normalizedPath.includes("note_results/")) {
+            const parts = normalizedPath.split("note_results/");
+            if (parts.length > 1) {
+                const relativePath = parts[parts.length - 1];
+                const encodedRelativePath = relativePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                return `${BASE_URL}/note_results/${encodedRelativePath}`;
+            }
+        }
+
+        // Handle absolute paths in uploads (fallback)
+        if (normalizedPath.includes("/uploads/")) {
+            const parts = normalizedPath.split("/uploads/");
+            if (parts.length > 1) {
+                const relativePath = parts[parts.length - 1];
+                const encodedRelativePath = relativePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                return `${BASE_URL}/uploads/${encodedRelativePath}`;
+            }
+        }
+
+        if (normalizedPath.startsWith("/")) {
+            return getEncodedUrl(normalizedPath);
+        }
+
+        return normalizedPath;
     };
 
     // 1. For local uploads, STRICTLY prioritize the original upload URL (formData.video_url)
@@ -64,8 +93,15 @@ export function getVideoUrl(url: string, platform?: string, filePath?: string): 
         }
     }
 
-    // 2. Prioritize external URLs (YouTube/Bilibili) if present, BEFORE checking processing artifacts (filePath)
-    // This prevents the player from using the downloaded AUDIO file when we want to show the VIDEO iframe.
+    // 2. Prefer downloaded VIDEO file when available (avoid audio-only artifacts)
+    if (filePath) {
+        const normalizedPath = filePath.replace(/\\/g, '/');
+        if (isVideoFilePath(normalizedPath)) {
+            return buildFileUrl(normalizedPath);
+        }
+    }
+
+    // 3. Prioritize external URLs (YouTube/Bilibili) if present
     if (url) {
         if (url.includes("youtube.com") || url.includes("youtu.be")) {
             return url;
@@ -75,37 +111,10 @@ export function getVideoUrl(url: string, platform?: string, filePath?: string): 
         }
     }
 
-    // 3. If no local URL or external platform, check filePath (downloaded content)
+    // 4. If no external platform, allow non-video filePath fallback
     if (filePath) {
         const normalizedPath = filePath.replace(/\\/g, '/');
-
-        // Handle note_results (downloaded files)
-        if (normalizedPath.includes("note_results/")) {
-            const parts = normalizedPath.split("note_results/");
-            if (parts.length > 1) {
-                const relativePath = parts[parts.length - 1];
-                const encodedRelativePath = relativePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                const finalUrl = `${BASE_URL}/note_results/${encodedRelativePath}`;
-                return finalUrl;
-            }
-        }
-
-        // Handle absolute paths in uploads (fallback)
-        if (normalizedPath.includes("/uploads/")) {
-            const parts = normalizedPath.split("/uploads/");
-            if (parts.length > 1) {
-                const relativePath = parts[parts.length - 1];
-                const encodedRelativePath = relativePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                const finalUrl = `${BASE_URL}/uploads/${encodedRelativePath}`;
-                return finalUrl;
-            }
-        }
-
-        if (filePath.startsWith("/")) {
-            const finalUrl = getEncodedUrl(filePath);
-            return finalUrl;
-        }
-        return filePath;
+        return buildFileUrl(normalizedPath);
     }
 
     if (!url) return "";

@@ -15,7 +15,7 @@ from app.downloaders.bilibili_downloader import BilibiliDownloader
 from app.downloaders.douyin_downloader import DouyinDownloader
 from app.downloaders.local_downloader import LocalDownloader
 from app.downloaders.youtube_downloader import YoutubeDownloader
-from app.db.video_task_dao import delete_task_by_video, insert_video_task
+from app.db.video_task_dao import delete_task_by_video, delete_task_by_task_id, get_task_ids_by_video, insert_video_task
 from app.enmus.exception import NoteErrorEnum, ProviderErrorEnum
 from app.enmus.task_status_enums import TaskStatus
 from app.enmus.note_enums import DownloadQuality
@@ -120,7 +120,9 @@ class NoteGenerator:
 
         try:
             logger.info(f"开始生成笔记 (task_id={task_id})")
+            self._check_canceled(task_id)
             self._update_status(task_id, TaskStatus.PARSING)
+            self._check_canceled(task_id)
 
             # 获取下载器与 GPT 实例
 
@@ -146,6 +148,7 @@ class NoteGenerator:
                 video_interval=video_interval,
                 grid_size=grid_size,
             )
+            self._check_canceled(task_id)
 
             # 2. 转写文字
             transcript = self._transcribe_audio(
@@ -153,6 +156,7 @@ class NoteGenerator:
                 transcript_cache_file=transcript_cache_file,
                 status_phase=TaskStatus.TRANSCRIBING,
             )
+            self._check_canceled(task_id)
 
             # 3. GPT 总结
             markdown = self._summarize_text(
@@ -167,6 +171,7 @@ class NoteGenerator:
                 extras=extras,
                 video_img_urls=self.video_img_urls,
             )
+            self._check_canceled(task_id)
 
             # 4. 截图 & 链接替换
             if _format:
@@ -177,6 +182,7 @@ class NoteGenerator:
                     audio_meta=audio_meta,
                     platform=platform,
                 )
+            self._check_canceled(task_id)
 
             # 5. 保存记录到数据库
             self._update_status(task_id, TaskStatus.SAVING)
@@ -193,7 +199,7 @@ class NoteGenerator:
             return None
 
     @staticmethod
-    def delete_note(video_id: str, platform: str) -> int:
+    def delete_note(video_id: str, platform: str, task_id: Optional[str] = None) -> int:
         """
         删除数据库中对应 video_id 与 platform 的任务记录
 
@@ -201,10 +207,110 @@ class NoteGenerator:
         :param platform: 平台标识
         :return: 删除的记录数
         """
-        logger.info(f"删除笔记记录 (video_id={video_id}, platform={platform})")
-        return delete_task_by_video(video_id, platform)
+        logger.info(f"删除笔记记录 (video_id={video_id}, platform={platform}, task_id={task_id})")
+        task_ids: list[str] = []
+        if video_id and platform:
+            task_ids.extend(get_task_ids_by_video(video_id, platform))
+        if task_id and task_id not in task_ids:
+            task_ids.append(task_id)
+
+        deleted_count = 0
+        if video_id and platform:
+            deleted_count += delete_task_by_video(video_id, platform)
+        if task_id:
+            deleted_count += delete_task_by_task_id(task_id)
+
+        from app.services.task_queue import cancel_task
+        for tid in task_ids:
+            cancel_task(tid)
+
+        files_to_remove = [
+            "{task_id}.json",
+            "{task_id}.status.json",
+            "{task_id}_audio.json",
+            "{task_id}_transcript.json",
+            "{task_id}_markdown.md",
+        ]
+        for tid in task_ids:
+            markdown_file = NOTE_OUTPUT_DIR / f"{tid}_markdown.md"
+            if markdown_file.exists():
+                try:
+                    markdown_text = markdown_file.read_text(encoding="utf-8")
+                    image_base = IMAGE_BASE_URL.rstrip("/")
+                    if image_base:
+                        for filename in re.findall(rf"{re.escape(image_base)}/([^\s)]+)", markdown_text):
+                            image_path = Path(IMAGE_OUTPUT_DIR) / filename
+                            try:
+                                if image_path.exists():
+                                    image_path.unlink()
+                            except Exception as exc:
+                                logger.warning(f"删除截图失败: {image_path} ({exc})")
+                except Exception as exc:
+                    logger.warning(f"读取 Markdown 失败: {markdown_file} ({exc})")
+
+            media_paths: set[str] = set()
+            audio_cache_file = NOTE_OUTPUT_DIR / f"{tid}_audio.json"
+            if audio_cache_file.exists():
+                try:
+                    data = json.loads(audio_cache_file.read_text(encoding="utf-8"))
+                    file_path = data.get("file_path")
+                    video_path = data.get("video_path")
+                    raw_info = data.get("raw_info") or {}
+                    raw_video_path = raw_info.get("video_path")
+                    if file_path:
+                        media_paths.add(file_path)
+                    if video_path:
+                        media_paths.add(video_path)
+                    if raw_video_path:
+                        media_paths.add(raw_video_path)
+                except Exception as exc:
+                    logger.warning(f"读取音频缓存失败: {audio_cache_file} ({exc})")
+
+            result_file = NOTE_OUTPUT_DIR / f"{tid}.json"
+            if result_file.exists():
+                try:
+                    data = json.loads(result_file.read_text(encoding="utf-8"))
+                    audio_meta = data.get("audio_meta") or {}
+                    file_path = audio_meta.get("file_path")
+                    video_path = audio_meta.get("video_path")
+                    raw_info = audio_meta.get("raw_info") or {}
+                    raw_video_path = raw_info.get("video_path")
+                    if file_path:
+                        media_paths.add(file_path)
+                    if video_path:
+                        media_paths.add(video_path)
+                    if raw_video_path:
+                        media_paths.add(raw_video_path)
+                except Exception as exc:
+                    logger.warning(f"读取结果文件失败: {result_file} ({exc})")
+
+            for media_path in media_paths:
+                try:
+                    media_file = Path(media_path)
+                    if media_file.exists():
+                        media_file.unlink()
+                except Exception as exc:
+                    logger.warning(f"删除媒体文件失败: {media_path} ({exc})")
+
+            for pattern in files_to_remove:
+                file_path = NOTE_OUTPUT_DIR / pattern.format(task_id=tid)
+                try:
+                    if file_path.exists():
+                        file_path.unlink()
+                except Exception as exc:
+                    logger.warning(f"删除缓存文件失败: {file_path} ({exc})")
+
+        return deleted_count
 
     # ---------------- 私有方法 ----------------
+    def _check_canceled(self, task_id: Optional[str]):
+        if not task_id:
+            return
+        from app.services.task_queue import is_task_canceled, clear_canceled
+        if is_task_canceled(task_id):
+            clear_canceled(task_id)
+            self._update_status(task_id, TaskStatus.FAILED, message="任务已取消")
+            raise Exception("任务已取消")
 
     def _init_transcriber(self) -> Transcriber:
         """
@@ -378,7 +484,11 @@ class NoteGenerator:
             logger.info(f"检测到音频缓存 ({audio_cache_file})，直接读取")
             try:
                 data = json.loads(audio_cache_file.read_text(encoding="utf-8"))
-                return AudioDownloadResult(**data)
+                audio = AudioDownloadResult(**data)
+                if need_video and self.video_path and not audio.video_path:
+                    audio.video_path = str(self.video_path)
+                    audio_cache_file.write_text(json.dumps(asdict(audio), ensure_ascii=False, indent=2), encoding="utf-8")
+                return audio
             except Exception as e:
                 logger.warning(f"读取音频缓存失败，将重新下载：{e}")
         # 下载音频
@@ -390,6 +500,8 @@ class NoteGenerator:
                 output_dir=output_path,
                 need_video=need_video,
             )
+            if need_video and self.video_path:
+                audio.video_path = str(self.video_path)
             # 缓存 audio 元信息到本地 JSON
             audio_cache_file.write_text(json.dumps(asdict(audio), ensure_ascii=False, indent=2), encoding="utf-8")
             logger.info(f"音频下载并缓存成功 ({audio_cache_file})")

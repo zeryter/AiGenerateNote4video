@@ -12,13 +12,12 @@ export const HomePage: FC = () => {
   const currentTask = tasks.find(t => t.id === currentTaskId)
 
   const [status, setStatus] = useState<ViewStatus>('idle')
-
   const content = currentTask?.markdown || ''
 
   useEffect(() => {
     if (!currentTask) {
       setStatus('idle')
-    } else if (currentTask.status === 'PENDING') {
+    } else if (currentTask.status === 'PENDING' || currentTask.status === 'QUEUED') {
       setStatus('loading')
     } else if (currentTask.status === 'SUCCESS') {
       setStatus('success')
@@ -36,7 +35,7 @@ export const HomePage: FC = () => {
   return (
     <HomeLayout
       NoteForm={<NoteForm />}
-      Preview={<MarkdownViewer status={status} />}
+      Preview={<MarkdownViewer status={status} content={content} />}
       History={<History />}
     />
   )

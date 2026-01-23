@@ -2,6 +2,7 @@ import enum
 
 
 class TaskStatus(str, enum.Enum):
+    QUEUED = "QUEUED"
     PENDING = "PENDING"
     PARSING = "PARSING"
     DOWNLOADING = "DOWNLOADING"
@@ -15,6 +16,7 @@ class TaskStatus(str, enum.Enum):
     @classmethod
     def description(cls, status):
         desc_map = {
+            cls.QUEUED: "排队中",
             cls.PENDING: "排队中",
             cls.PARSING: "解析链接",
             cls.DOWNLOADING: "下载中",

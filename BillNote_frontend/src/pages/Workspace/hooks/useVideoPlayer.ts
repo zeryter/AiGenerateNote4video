@@ -2,19 +2,20 @@ import { useRef } from "react";
 import ReactPlayerBase from "react-player";
 
 // Fix for ReactPlayer import in Vite
-export const ReactPlayer = (ReactPlayerBase as any).default || ReactPlayerBase;
+const maybeReactPlayer = ReactPlayerBase as unknown as { default?: typeof ReactPlayerBase };
+export const ReactPlayer = maybeReactPlayer.default ?? ReactPlayerBase;
 
 export function useVideoPlayer() {
     const videoRef = useRef<HTMLVideoElement>(null);
-    const reactPlayerRef = useRef<any>(null);
+    const reactPlayerRef = useRef<HTMLVideoElement>(null);
 
     const handleSeek = (time: number) => {
         if (videoRef.current) {
             videoRef.current.currentTime = time;
             videoRef.current.play();
         } else if (reactPlayerRef.current) {
-            reactPlayerRef.current.seekTo(time);
-            // reactPlayerRef.current.getInternalPlayer().play(); 
+            reactPlayerRef.current.currentTime = time;
+            reactPlayerRef.current.play();
         }
     };
 
@@ -22,7 +23,7 @@ export function useVideoPlayer() {
         if (videoRef.current) {
             return videoRef.current.currentTime;
         } else if (reactPlayerRef.current) {
-            return reactPlayerRef.current.getCurrentTime();
+            return reactPlayerRef.current.currentTime;
         }
         return 0;
     };
@@ -42,7 +43,7 @@ export function useVideoPlayer() {
         if (videoRef.current) {
             videoRef.current.currentTime += seconds;
         } else if (reactPlayerRef.current) {
-            reactPlayerRef.current.seekTo(reactPlayerRef.current.getCurrentTime() + seconds);
+            reactPlayerRef.current.currentTime += seconds;
         }
     }
 

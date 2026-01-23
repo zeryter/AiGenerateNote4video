@@ -10,7 +10,7 @@ export interface IMenuProps {
   path: string
 }
 
-const MenuBar: ({ menuItem }: { menuItem: any }) => JSX.Element = ({ menuItem }) => {
+const MenuBar: ({ menuItem }: { menuItem: IMenuProps }) => JSX.Element = ({ menuItem }) => {
   const location = useLocation()
   const isActive =
     location.pathname.startsWith(menuItem.path + '/') || location.pathname === menuItem.path

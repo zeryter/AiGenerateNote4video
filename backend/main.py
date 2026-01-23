@@ -17,6 +17,7 @@ from app import create_app
 from app.transcriber.transcriber_provider import get_transcriber
 from events import register_handler
 from ffmpeg_helper import ensure_ffmpeg_or_raise
+from app.services.task_queue import start_task_queue, stop_task_queue
 
 logger = get_logger(__name__)
 load_dotenv()
@@ -42,7 +43,11 @@ async def lifespan(app: FastAPI):
     init_db()
     get_transcriber(transcriber_type=os.getenv("TRANSCRIBER_TYPE", "fast-whisper"))
     seed_default_providers()
-    yield
+    start_task_queue()
+    try:
+        yield
+    finally:
+        stop_task_queue()
 
 app = create_app(lifespan=lifespan)
 origins = [

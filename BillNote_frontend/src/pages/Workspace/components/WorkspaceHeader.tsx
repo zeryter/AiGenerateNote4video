@@ -6,9 +6,10 @@ import { useModelStore } from "@/store/modelStore";
 import toast from "react-hot-toast";
 import { makeVideoKey, useTagStore } from "@/store/tagStore";
 import { setVideoTags } from "@/services/tags";
+import type { Task } from "@/store/taskStore";
 
 interface WorkspaceHeaderProps {
-    task: any;
+    task: Task;
     statusInfo: { label: string; color: string };
     onRetry: (providerId: string, modelName: string) => void;
     onCopy: () => void;
@@ -25,7 +26,8 @@ export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, cop
         return makeVideoKey(task?.audioMeta?.platform, task?.audioMeta?.video_id);
     }, [task?.audioMeta?.platform, task?.audioMeta?.video_id]);
 
-    const tags = useTagStore((s) => (videoKey ? s.tagsByKey[videoKey] || [] : []));
+    const emptyTagsRef = useRef<string[]>([]);
+    const tags = useTagStore((s) => (videoKey ? s.tagsByKey[videoKey] || emptyTagsRef.current : emptyTagsRef.current));
     const setTagsForKey = useTagStore((s) => s.setTagsForKey);
     const [tagInput, setTagInput] = useState("");
     const [editingTags, setEditingTags] = useState(false);
@@ -33,6 +35,19 @@ export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, cop
 
     const platformForTags = task?.audioMeta?.platform;
     const videoIdForTags = task?.audioMeta?.video_id;
+    const statusMessage = typeof task?.statusMessage === "string" ? task.statusMessage.trim() : "";
+
+    const getErrorMessage = (error: unknown) => {
+        if (!error) return "标签保存失败";
+        if (typeof error === "string") return error;
+        if (error instanceof Error && error.message) return error.message;
+        if (typeof error === "object") {
+            const message = "message" in error ? (error as { message?: string }).message : undefined;
+            const msg = "msg" in error ? (error as { msg?: string }).msg : undefined;
+            return msg || message || "标签保存失败";
+        }
+        return "标签保存失败";
+    };
 
     const scheduleSaveTags = (nextTags: string[]) => {
         if (!platformForTags || !videoIdForTags) return;
@@ -40,8 +55,8 @@ export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, cop
         saveTimerRef.current = window.setTimeout(async () => {
             try {
                 await setVideoTags(platformForTags, videoIdForTags, nextTags);
-            } catch (e: any) {
-                toast.error(e?.msg || e?.message || "标签保存失败");
+            } catch (error: unknown) {
+                toast.error(getErrorMessage(error));
             }
         }, 500);
     };
@@ -105,7 +120,12 @@ export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, cop
                     <span className="font-semibold text-sm truncate max-w-[300px]">
                         {task.audioMeta?.title || "BiliNote Workspace"}
                     </span>
-                    <span className={`text-xs ${statusInfo.color}`}>{statusInfo.label}</span>
+                    <span className={`text-xs ${statusInfo.color}`}>阶段：{statusInfo.label}</span>
+                    {statusMessage && (
+                        <span className={`text-xs ${task.status === "FAILED" ? "text-red-400" : "text-muted-foreground"}`}>
+                            {statusMessage}
+                        </span>
+                    )}
                 </div>
                 {videoKey && (
                     <div className="flex items-center gap-2 ml-2 min-w-0 max-w-[40vw] overflow-x-auto">

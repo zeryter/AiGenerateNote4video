@@ -7,14 +7,14 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form.tsx'
-import { useEffect,useState } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { useEffect, useState } from 'react'
+import { useForm, useWatch, type FieldErrors } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
 import { Info, Loader2, Plus } from 'lucide-react'
-import { message, Alert } from 'antd'
-import { generateNote } from '@/services/note.ts'
+import { Alert } from 'antd'
+import { generateNote, type GenerateNotePayload } from '@/services/note.ts'
 import { uploadFile } from '@/services/upload.ts'
 import { useTaskStore } from '@/store/taskStore'
 import { useModelStore } from '@/store/modelStore'
@@ -25,7 +25,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip.tsx'
 import { Checkbox } from '@/components/ui/checkbox.tsx'
-import { ScrollArea } from '@/components/ui/scroll-area.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import {
   Select,
@@ -37,13 +36,12 @@ import {
 import { Input } from '@/components/ui/input.tsx'
 import { Textarea } from '@/components/ui/textarea.tsx'
 import { noteStyles, noteFormats, videoPlatforms } from '@/constant/note.ts'
-import { fetchModels } from '@/services/model.ts'
 import { useNavigate } from 'react-router-dom'
 
 /* -------------------- 校验 Schema -------------------- */
 const formSchema = z
   .object({
-    video_url: z.string().optional(),
+    video_url: z.string().nonempty(),
     platform: z.string().nonempty('请选择平台'),
     quality: z.enum(['fast', 'medium', 'slow']),
     screenshot: z.boolean().optional(),
@@ -56,8 +54,7 @@ const formSchema = z
     video_interval: z.coerce.number().min(1).max(30).default(4).optional(),
     grid_size: z
       .tuple([z.coerce.number().min(1).max(10), z.coerce.number().min(1).max(10)])
-      .default([3, 3])
-      .optional(),
+      .default([3, 3]),
   })
   .superRefine(({ video_url, platform }, ctx) => {
     if (platform === 'local') {
@@ -82,7 +79,7 @@ const formSchema = z
     }
   })
 
-export type NoteFormValues = z.infer<typeof formSchema>
+export type NoteFormValues = z.input<typeof formSchema>
 
 /* -------------------- 可复用子组件 -------------------- */
 const SectionHeader = ({ title, tip }: { title: string; tip?: string }) => (
@@ -117,7 +114,7 @@ const CheckboxGroup = ({
           checked={value.includes(v)}
           disabled={disabledMap[v]}
           onCheckedChange={checked =>
-            onChange(checked ? [...value, v] : value.filter(x => x !== v))
+            onChange(checked === true ? [...value, v] : value.filter(x => x !== v))
           }
         />
         <span>{label}</span>
@@ -128,19 +125,20 @@ const CheckboxGroup = ({
 
 /* -------------------- 主组件 -------------------- */
 const NoteForm = () => {
-  const navigate = useNavigate();
+  const navigate = useNavigate()
   const [isUploading, setIsUploading] = useState(false)
   const [uploadSuccess, setUploadSuccess] = useState(false)
   /* ---- 全局状态 ---- */
   const { addPendingTask, currentTaskId, setCurrentTask, getCurrentTask, retryTask } =
     useTaskStore()
-  const { loadEnabledModels, modelList, showFeatureHint, setShowFeatureHint } = useModelStore()
+  const { loadEnabledModels, modelList } = useModelStore()
 
   /* ---- 表单 ---- */
   const form = useForm<NoteFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       platform: 'bilibili',
+      video_url: '',
       quality: 'medium',
       model_name: modelList[0]?.model_name || '',
       style: 'minimal',
@@ -157,42 +155,41 @@ const NoteForm = () => {
   const editing = currentTask && currentTask.id
 
   const goModelAdd = () => {
-    navigate("/settings/model");
-  };
+    navigate('/settings/model')
+  }
   /* ---- 副作用 ---- */
   useEffect(() => {
     loadEnabledModels()
-
-    return
-  }, [])
+  }, [loadEnabledModels])
   useEffect(() => {
     if (!currentTask) return
     const { formData } = currentTask
 
     console.log('currentTask.formData.platform:', formData.platform)
 
+    const normalizedQuality =
+      formData.quality === 'fast' || formData.quality === 'medium' || formData.quality === 'slow'
+        ? formData.quality
+        : 'medium'
+    const gridSize: [number, number] =
+      formData.grid_size?.length === 2
+        ? [formData.grid_size[0], formData.grid_size[1]]
+        : [3, 3]
     form.reset({
       platform: formData.platform || 'bilibili',
       video_url: formData.video_url || '',
       model_name: formData.model_name || modelList[0]?.model_name || '',
       style: formData.style || 'minimal',
-      quality: formData.quality || 'medium',
+      quality: normalizedQuality,
       extras: formData.extras || '',
       screenshot: formData.screenshot ?? false,
       link: formData.link ?? false,
       video_understanding: formData.video_understanding ?? false,
       video_interval: formData.video_interval ?? 4,
-      grid_size: formData.grid_size ?? [3, 3],
+      grid_size: gridSize,
       format: formData.format ?? [],
     })
-  }, [
-    // 当下面任意一个变了，就重新 reset
-    currentTaskId,
-    // modelList 用来兜底 model_name
-    modelList.length,
-    // 还要加上 formData 的各字段，或者直接 currentTask
-    currentTask?.formData,
-  ])
+  }, [currentTaskId, currentTask, modelList, form])
 
   /* ---- 帮助函数 ---- */
   const isGenerating = () => !['SUCCESS', 'FAILED', undefined].includes(getCurrentTask()?.status)
@@ -205,9 +202,11 @@ const NoteForm = () => {
 
     try {
   
-      const  data  = await uploadFile(formData)
+      const data = await uploadFile(formData)
+      if (data?.url) {
         cb(data.url)
         setUploadSuccess(true)
+      }
     } catch (err) {
       console.error('上传失败:', err)
       // message.error('上传失败，请重试')
@@ -218,10 +217,16 @@ const NoteForm = () => {
 
   const onSubmit = async (values: NoteFormValues) => {
     console.log('Not even go here')
-    const payload: NoteFormValues = {
+    const providerId = modelList.find(m => m.model_name === values.model_name)?.provider_id
+    if (!providerId) return
+    const payload: GenerateNotePayload = {
       ...values,
-      provider_id: modelList.find(m => m.model_name === values.model_name)!.provider_id,
-      task_id: currentTaskId || '',
+      video_url: values.video_url || '',
+      provider_id: providerId,
+      task_id: currentTaskId || undefined,
+      video_understand: values.video_understanding,
+      format: values.format ?? [],
+      grid_size: values.grid_size ?? [3, 3],
     }
     if (currentTaskId) {
       retryTask(currentTaskId, payload)
@@ -229,7 +234,8 @@ const NoteForm = () => {
     }
 
     // message.success('已提交任务')
-    const  data  = await generateNote(payload)
+    const data = await generateNote(payload)
+    if (!data?.task_id) return
     addPendingTask(data.task_id, values.platform, payload)
   }
   const onInvalid = (errors: FieldErrors<NoteFormValues>) => {
@@ -379,7 +385,6 @@ const NoteForm = () => {
             {
 
              modelList.length>0?(     <FormField
-               className="w-full"
                control={form.control}
                name="model_name"
                render={({ field }) => (
@@ -422,7 +427,6 @@ const NoteForm = () => {
 
             {/* 笔记风格 */}
             <FormField
-              className="w-full"
               control={form.control}
               name="style"
               render={({ field }) => (
@@ -461,10 +465,10 @@ const NoteForm = () => {
                 <FormItem>
                   <div className="flex items-center gap-2">
                     <FormLabel>启用</FormLabel>
-                    <Checkbox
-                      checked={videoUnderstandingEnabled}
-                      onCheckedChange={v => form.setValue('video_understanding', v)}
-                    />
+                <Checkbox
+                  checked={field.value ?? false}
+                  onCheckedChange={checked => field.onChange(checked === true)}
+                />
                   </div>
                   <FormMessage />
                 </FormItem>

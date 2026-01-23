@@ -1,10 +1,14 @@
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Clock, Trash2, Youtube, Play, FileVideo, Calendar, Search, Tag, ArrowUpDown } from "lucide-react";
-import { useTaskStore } from "@/store/taskStore";
+import { ArrowLeft, Clock, Trash2, Youtube, Play, FileVideo, Calendar, Search, Tag, ArrowUpDown, CheckSquare, Square, Plus, RefreshCw } from "lucide-react";
+import { useTaskStore, type Task } from "@/store/taskStore";
+import { EmptyState } from "@/components/ui/empty-state";
 import { motion, AnimatePresence } from "framer-motion";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import toast from "react-hot-toast";
 import { makeVideoKey, useTagStore } from "@/store/tagStore";
+import { usePlaylistStore } from "@/store/playlistStore";
+import { setVideoTags } from "@/services/tags";
+import { statusMap } from "@/constant/status";
 
 // Helper to get platform icon
 function PlatformIcon({ platform }: { platform: string }) {
@@ -38,6 +42,14 @@ export default function HistoryPage() {
     const fetchTasks = useTaskStore((s) => s.fetchTasks);
     const [searchTerm, setSearchTerm] = useState("");
     const tagsByKey = useTagStore((s) => s.tagsByKey);
+    const addTasksToPlaylist = usePlaylistStore((s) => s.addTasks);
+    const replacePlaylist = usePlaylistStore((s) => s.replaceWithTasks);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const setTagsForKey = useTagStore((s) => s.setTagsForKey);
+    const [batchTagInput, setBatchTagInput] = useState("");
+    const [batchSaving, setBatchSaving] = useState(false);
+    const PAGE_SIZE = 50;
+    const [currentPage, setCurrentPage] = useState(1);
 
     const SORT_KEY = "history_sort_v1";
     const FILTER_KEY = "history_tag_filters_v1";
@@ -77,13 +89,13 @@ export default function HistoryPage() {
         localStorage.setItem(FILTER_KEY, JSON.stringify(selectedTags));
     }, [selectedTags]);
 
-    const getTaskTags = (task: any): string[] => {
+    const getTaskTags = useCallback((task: Task): string[] => {
         const platform = task?.audioMeta?.platform || task?.platform || task?.formData?.platform;
         const videoId = task?.audioMeta?.video_id;
         const key = makeVideoKey(platform, videoId);
         if (key && Array.isArray(tagsByKey[key])) return tagsByKey[key];
         return Array.isArray(task?.tags) ? (task.tags as string[]) : [];
-    };
+    }, [tagsByKey]);
 
     const tagStats = useMemo(() => {
         const counts = new Map<string, number>();
@@ -96,7 +108,7 @@ export default function HistoryPage() {
         const items = Array.from(counts.entries()).map(([tag, count]) => ({ tag, count }));
         items.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
         return items;
-    }, [tasks, tagsByKey]);
+    }, [tasks, getTaskTags]);
 
     const filteredTasks = tasks.filter((task) => {
         const title = task.audioMeta?.title || "";
@@ -109,12 +121,13 @@ export default function HistoryPage() {
         return selectedTags.every((t) => taskTags.includes(t));
     });
 
-    const statusRank = (status: string, mode: SortOption) => {
-        if (mode === "status_in_progress_first") return status === "PENDING" ? 0 : status === "SUCCESS" ? 1 : 2;
-        if (mode === "status_success_first") return status === "SUCCESS" ? 0 : status === "PENDING" ? 1 : 2;
-        if (mode === "status_failed_first") return status === "FAILED" ? 0 : status === "PENDING" ? 1 : 2;
+    const statusRank = useCallback((status: string, mode: SortOption) => {
+        const isQueued = status === "PENDING" || status === "QUEUED";
+        if (mode === "status_in_progress_first") return isQueued ? 0 : status === "SUCCESS" ? 1 : 2;
+        if (mode === "status_success_first") return status === "SUCCESS" ? 0 : isQueued ? 1 : 2;
+        if (mode === "status_failed_first") return status === "FAILED" ? 0 : isQueued ? 1 : 2;
         return 0;
-    };
+    }, []);
 
     const sortedTasks = useMemo(() => {
         const list = [...filteredTasks];
@@ -140,7 +153,20 @@ export default function HistoryPage() {
             return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         });
         return list;
-    }, [filteredTasks, sortOption]);
+    }, [filteredTasks, sortOption, statusRank]);
+    const totalPages = Math.max(1, Math.ceil(sortedTasks.length / PAGE_SIZE));
+    const pagedTasks = useMemo(() => {
+        const start = (currentPage - 1) * PAGE_SIZE;
+        return sortedTasks.slice(start, start + PAGE_SIZE);
+    }, [sortedTasks, currentPage]);
+    const selectedTasks = useMemo(() => {
+        const map = new Map(tasks.map((t) => [t.id, t]));
+        return selectedIds.map((id) => map.get(id)).filter((t): t is Task => Boolean(t));
+    }, [selectedIds, tasks]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchTerm, selectedTags, sortOption, tasks.length]);
 
     const handleDelete = (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
@@ -148,6 +174,68 @@ export default function HistoryPage() {
             removeTask(id);
             toast.success("已删除");
         }
+    };
+    const toggleSelected = (id: string) => {
+        setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    };
+    const selectAllVisible = () => {
+        setSelectedIds(pagedTasks.map((t) => t.id));
+    };
+    const clearSelection = () => {
+        setSelectedIds([]);
+    };
+    const handleAddToPlaylist = () => {
+        if (selectedTasks.length === 0) return;
+        addTasksToPlaylist(selectedTasks);
+        toast.success(`已加入 ${selectedTasks.length} 条`);
+        clearSelection();
+    };
+    const handleReplacePlaylist = () => {
+        if (selectedTasks.length === 0) return;
+        replacePlaylist(selectedTasks);
+        toast.success(`已替换为 ${selectedTasks.length} 条`);
+        clearSelection();
+    };
+    const parseTagsInput = (input: string) =>
+        input
+            .split(/[,，\n]/)
+            .map((t) => t.trim())
+            .filter((t) => t.length > 0);
+    const handleBatchAddTags = async () => {
+        if (batchSaving) return;
+        const parsed = parseTagsInput(batchTagInput);
+        if (parsed.length === 0) {
+            toast.error("请输入标签");
+            return;
+        }
+        const updates = selectedTasks
+            .map((task) => {
+                const platform = task?.audioMeta?.platform || task?.platform || task?.formData?.platform;
+                const videoId = task?.audioMeta?.video_id;
+                const key = makeVideoKey(platform, videoId);
+                if (!key || !platform || !videoId) return null;
+                const current = getTaskTags(task);
+                const next = Array.from(new Set([...current, ...parsed]));
+                setTagsForKey(key, next);
+                return { platform, videoId, next };
+            })
+            .filter((item): item is { platform: string; videoId: string; next: string[] } => Boolean(item));
+        if (updates.length === 0) {
+            toast.error("没有可更新的任务");
+            return;
+        }
+        setBatchSaving(true);
+        const results = await Promise.allSettled(
+            updates.map((u) => setVideoTags(u.platform, u.videoId, u.next))
+        );
+        const failed = results.filter((r) => r.status === "rejected").length;
+        if (failed > 0) {
+            toast.error(`有 ${failed} 条保存失败`);
+        } else {
+            toast.success(`已添加标签到 ${updates.length} 条`);
+        }
+        setBatchSaving(false);
+        setBatchTagInput("");
     };
 
     return (
@@ -181,7 +269,7 @@ export default function HistoryPage() {
                         >
                             <option value="created_desc">最新优先</option>
                             <option value="created_asc">最早优先</option>
-                            <option value="status_in_progress_first">进行中优先</option>
+                            <option value="status_in_progress_first">排队中优先</option>
                             <option value="status_success_first">已完成优先</option>
                             <option value="status_failed_first">失败优先</option>
                             <option value="title_asc">标题 A-Z</option>
@@ -248,17 +336,85 @@ export default function HistoryPage() {
                 </div>
             </div>
 
-            {/* List */}
+            <div className="flex items-center justify-between mb-4">
+                <div className="text-sm text-muted-foreground">
+                    已选择 {selectedIds.length} 条
+                </div>
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                    {selectedIds.length > 0 && (
+                        <>
+                            <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-border/50 bg-card/40">
+                                <Tag size={12} className="text-muted-foreground" />
+                                <input
+                                    value={batchTagInput}
+                                    onChange={(e) => setBatchTagInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            handleBatchAddTags();
+                                        }
+                                    }}
+                                    placeholder="标签(逗号分隔)"
+                                    className="w-28 h-7 bg-transparent text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleBatchAddTags}
+                                    disabled={batchSaving}
+                                    className={`h-7 px-2 rounded-md text-xs ${batchSaving ? "bg-muted text-muted-foreground" : "bg-primary text-primary-foreground hover:opacity-90"}`}
+                                >
+                                    添加
+                                </button>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleAddToPlaylist}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border/50 bg-card/40 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                            >
+                                <Plus size={12} />
+                                加入播放列表
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleReplacePlaylist}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border/50 bg-card/40 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                            >
+                                <RefreshCw size={12} />
+                                替换播放列表
+                            </button>
+                            <button
+                                type="button"
+                                onClick={clearSelection}
+                                className="px-3 py-1.5 rounded-lg border border-border/50 bg-card/30 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                            >
+                                清空选择
+                            </button>
+                        </>
+                    )}
+                    {sortedTasks.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={selectAllVisible}
+                            className="px-3 py-1.5 rounded-lg border border-border/50 bg-card/30 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                        >
+                            全选当前
+                        </button>
+                    )}
+                </div>
+            </div>
+
             <div className="flex-1 overflow-auto pr-2 custom-scrollbar">
                 {sortedTasks.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-muted-foreground opacity-60">
-                        <Clock size={48} className="mb-4" />
-                        <p>没有找到相关记录</p>
-                    </div>
+                    <EmptyState
+                        icon={<Clock size={48} className="text-muted-foreground/70" />}
+                        title="没有找到相关记录"
+                        description="换个关键词或清空筛选试试"
+                        className="py-20"
+                    />
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="columns-1 md:columns-2 lg:columns-3 gap-4">
                         <AnimatePresence>
-                            {sortedTasks.map((task) => (
+                            {pagedTasks.map((task) => (
                                 <motion.div
                                     key={task.id}
                                     layout
@@ -266,8 +422,18 @@ export default function HistoryPage() {
                                     animate={{ opacity: 1, scale: 1 }}
                                     exit={{ opacity: 0, scale: 0.95 }}
                                     onClick={() => navigate(`/workspace?taskId=${task.id}`, { state: { from: '/history' } })}
-                                    className="group relative bg-card/40 hover:bg-card/80 border border-border/50 hover:border-primary/30 rounded-xl p-4 cursor-pointer transition-all hover:shadow-lg hover:-translate-y-1 overflow-hidden"
+                                    className={`group relative bg-card/40 hover:bg-card/80 border border-border/50 hover:border-primary/30 rounded-xl p-4 cursor-pointer transition-all hover:shadow-lg hover:-translate-y-1 overflow-hidden break-inside-avoid mb-4 ${selectedIds.includes(task.id) ? "ring-1 ring-primary/40" : ""}`}
                                 >
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleSelected(task.id);
+                                        }}
+                                        className="absolute top-3 left-3 z-10 p-1.5 rounded-lg bg-background/80 border border-border/50 text-muted-foreground hover:text-foreground"
+                                    >
+                                        {selectedIds.includes(task.id) ? <CheckSquare size={14} /> : <Square size={14} />}
+                                    </button>
                                     <div className="flex gap-4">
                                         {/* Thumbnail / Icon */}
                                         <div className="w-20 h-20 rounded-lg bg-black/50 border border-border/30 flex items-center justify-center overflow-hidden flex-shrink-0">
@@ -288,9 +454,10 @@ export default function HistoryPage() {
                                                 <div className="flex items-center justify-between gap-2">
                                                     <span className={`text-[10px] px-1.5 py-0.5 rounded border ${task.status === 'SUCCESS' ? 'bg-green-500/10 text-green-500 border-green-500/20' :
                                                         task.status === 'FAILED' ? 'bg-red-500/10 text-red-500 border-red-500/20' :
-                                                            'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
+                                                            (task.status === 'QUEUED' || task.status === 'PENDING') ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' :
+                                                                'bg-blue-500/10 text-blue-500 border-blue-500/20'
                                                         }`}>
-                                                        {task.status === 'SUCCESS' ? '已完成' : task.status === 'FAILED' ? '失败' : '进行中'}
+                                                        {(statusMap[task.status] || statusMap.PENDING).label}
                                                     </span>
                                                     <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                                                         <Calendar size={10} />
@@ -313,7 +480,7 @@ export default function HistoryPage() {
                                                     {getTaskTags(task).slice(0, 4).map((t: string) => (
                                                         <span
                                                             key={t}
-                                                            className="px-2 py-0.5 rounded-full border border-border/50 bg-card/30 text-[10px] text-muted-foreground"
+                                                            className="px-2 py-0.5 rounded-full border border-primary/30 bg-primary/10 text-[10px] font-medium text-primary/90"
                                                         >
                                                             {t}
                                                         </span>
@@ -337,6 +504,31 @@ export default function HistoryPage() {
                     </div>
                 )}
             </div>
+            {sortedTasks.length > 0 && (
+                <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
+                    <div>
+                        第 {currentPage} / {totalPages} 页 · 每页 {PAGE_SIZE} 条
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                            disabled={currentPage <= 1}
+                            className="px-3 py-1.5 rounded-lg border border-border/50 bg-card/30 text-xs text-muted-foreground disabled:opacity-50"
+                        >
+                            上一页
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                            disabled={currentPage >= totalPages}
+                            className="px-3 py-1.5 rounded-lg border border-border/50 bg-card/30 text-xs text-muted-foreground disabled:opacity-50"
+                        >
+                            下一页
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

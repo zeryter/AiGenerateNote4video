@@ -2,7 +2,7 @@ import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import toast from 'react-hot-toast'
 
 // 统一响应类型
-export interface IResponse<T = any> {
+export interface IResponse<T = unknown> {
   code: number;
   msg: string;
   data: T;
@@ -19,9 +19,15 @@ const baseURL = import.meta.env.VITE_API_BASE_URL;
   timeout: 10000,
 });
 
-// 响应拦截器
-request.interceptors.response.use(
-  (response: AxiosResponse<IResponse>) => {
+const responseInterceptor = request.interceptors.response.use.bind(
+  request.interceptors.response
+) as unknown as (
+  onFulfilled?: (value: AxiosResponse<IResponse<unknown>>) => unknown,
+  onRejected?: (error: unknown) => unknown
+) => number
+
+responseInterceptor(
+  (response: AxiosResponse<IResponse<unknown>>) => {
     const res = response.data;
     if (res.code === 0) {
       // 业务成功，可以根据需要显示成功消息，或者不显示（如果操作本身就是可见的）
@@ -34,9 +40,10 @@ request.interceptors.response.use(
       return Promise.reject(res); // 拒绝Promise，让业务代码可以捕获并处理
     }
   },
-  (error) => {
-    // 网络/服务器错误
-    const res = error?.response?.data as IResponse | undefined;
+  (error: unknown) => {
+    const res = axios.isAxiosError(error)
+      ? (error.response?.data as IResponse | undefined)
+      : undefined;
     if (res) {
       // 如果后端有返回错误信息，则显示后端信息
       // If the backend returns an error message, display it

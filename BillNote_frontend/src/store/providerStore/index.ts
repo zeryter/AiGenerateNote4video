@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { IProvider, IResponse } from '@/types'
+import { IProvider } from '@/types'
 import {
   addProvider,
   getProviderById,
@@ -8,6 +8,18 @@ import {
   deleteProviderById,
 } from '@/services/model.ts'
 
+type ProviderApiItem = {
+  id: string
+  name: string
+  logo: string
+  api_key?: string
+  base_url: string
+  type: string
+  enabled: number
+}
+
+type ProviderCreatePayload = Omit<IProvider, 'id'>
+
 interface ProviderStore {
   provider: IProvider[]
   setProvider: (provider: IProvider) => void
@@ -15,8 +27,8 @@ interface ProviderStore {
   getProviderById: (id: number) => IProvider | undefined
   getProviderList: () => IProvider[]
   fetchProviderList: () => Promise<void>
-  loadProviderById: (id: string) => Promise<any>
-  addNewProvider: (provider: IProvider) => Promise<string | undefined>
+  loadProviderById: (id: string) => Promise<IProvider>
+  addNewProvider: (provider: ProviderCreatePayload) => Promise<string | undefined>
   updateProvider: (provider: IProvider) => Promise<void>
   deleteProvider: (id: string) => Promise<void>
 }
@@ -40,11 +52,8 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
   // 设置整个 provider 列表
   setAllProviders: providers => set({ provider: providers }),
   loadProviderById: async (id: string) => {
-    // request interceptor unwraps response, so res is the data object
-    const res = await getProviderById(id) as any
-
-    // Ensure we handle the object correctly
-    const item = res.data || res // Fallback if backend wraps it further
+    const res = (await getProviderById(id)) as unknown
+    const item = (res as { data?: ProviderApiItem }).data ?? (res as ProviderApiItem)
 
     return {
       id: item.id,
@@ -56,19 +65,20 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
       enabled: item.enabled,
     }
   },
-  addNewProvider: async (provider: IProvider) => {
+  addNewProvider: async (provider: ProviderCreatePayload) => {
     const payload = {
       ...provider,
       api_key: provider.apiKey,
       base_url: provider.baseUrl,
     }
     try {
-      const res = await addProvider(payload)
+      const res = (await addProvider(payload)) as unknown
       // Request interceptor handles error codes, so if we get here, it's successful
       console.log('Provider added:', res)
 
       await get().fetchProviderList()
-      return res?.id // Return the ID of the new provider
+      const id = (res as { id?: string }).id ?? (res as { data?: { id?: string } }).data?.id
+      return id
     } catch (error) {
       console.error('Error adding provider:', error)
       throw error
@@ -104,22 +114,21 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
   getProviderList: () => get().provider,
   fetchProviderList: async () => {
     try {
-      const res = (await getProviderList()) as unknown as any[]
+      const res = (await getProviderList()) as unknown
+      const list = Array.isArray(res)
+        ? (res as ProviderApiItem[])
+        : ((res as { data?: ProviderApiItem[] }).data ?? [])
 
       set({
-        provider: res.map(
-          (item: any) => {
-            return {
-              id: item.id,
-              name: item.name,
-              logo: item.logo,
-              apiKey: item.api_key,
-              baseUrl: item.base_url,
-              type: item.type,
-              enabled: item.enabled,
-            }
-          }
-        ),
+        provider: list.map(item => ({
+          id: item.id,
+          name: item.name,
+          logo: item.logo,
+          apiKey: item.api_key,
+          baseUrl: item.base_url,
+          type: item.type,
+          enabled: item.enabled,
+        })),
       })
     } catch (error) {
       console.error('Error fetching provider list:', error)

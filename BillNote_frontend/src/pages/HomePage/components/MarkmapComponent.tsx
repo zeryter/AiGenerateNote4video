@@ -4,15 +4,17 @@ import { transformer } from '@/lib/markmap.ts'
 import { Toolbar } from 'markmap-toolbar'
 import 'markmap-toolbar/dist/style.css'
 
+type MarkmapToolbarButton = Parameters<Toolbar['register']>[0]
+
 export interface MarkmapEditorProps {
   /** 要渲染的 Markdown 文本 */
   value: string
   /** 内容变化时的回调 */
-  onChange: (value: string) => void
+  onChange?: (value: string) => void
   /** Toolbar 上要展示的 item id 列表，默认使用 Toolbar.defaultItems */
   toolbarItems?: string[]
   /** 自定义按钮列表，会依次注册 */
-  customButtons?: any[]
+  customButtons?: MarkmapToolbarButton[]
   /** 容器 SVG 的高度，默认为 600px */
   height?: string
   /** 文档标题，用于导出HTML时的文件名 */
@@ -21,14 +23,13 @@ export interface MarkmapEditorProps {
 
 export default function MarkmapEditor({
   value,
-  onChange,
   toolbarItems,
   customButtons = [],
   height = '600px',
   title = 'mindmap',
 }: MarkmapEditorProps) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const mmRef = useRef<Markmap | undefined>()
+  const mmRef = useRef<Markmap | undefined>(undefined)
   const toolbarRef = useRef<HTMLDivElement>(null)
 
   // 用于跟踪是否处于全屏状态

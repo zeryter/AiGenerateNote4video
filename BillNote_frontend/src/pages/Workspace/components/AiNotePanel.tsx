@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Sparkles, FileText, Loader2 } from "lucide-react";
 import MarkdownPreview from "@uiw/react-markdown-preview";
+import type { Segment } from "@/store/taskStore";
 
 interface AiNotePanelProps {
     isLoading: boolean;
     markdownContent: string;
-    transcriptSegments: any[];
+    transcriptSegments: Segment[];
 }
 
 export default function AiNotePanel({ isLoading, markdownContent, transcriptSegments }: AiNotePanelProps) {
@@ -58,7 +59,7 @@ export default function AiNotePanel({ isLoading, markdownContent, transcriptSegm
                                 <span>正在转录...</span>
                             </div>
                         ) : (
-                            transcriptSegments.map((seg: any, idx: number) => (
+                            transcriptSegments.map((seg, idx) => (
                                 <div key={idx} className="flex gap-4 p-2 rounded-lg hover:bg-white/5 transition-colors group">
                                     <span className="text-xs text-muted-foreground w-12 pt-1 font-mono flex-shrink-0 group-hover:text-primary transition-colors">
                                         {new Date(seg.start * 1000).toISOString().substr(14, 5)}

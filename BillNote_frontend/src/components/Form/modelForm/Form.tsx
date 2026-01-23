@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useProviderStore } from '@/store/providerStore'
 import { useEffect, useState } from 'react'
+import type { AxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import { Tag } from 'antd'
 import { useModelStore } from '@/store/modelStore'
@@ -38,7 +39,7 @@ const ProviderSchema = z.object({
 type ProviderFormValues = z.infer<typeof ProviderSchema>
 
 const ProviderForm = ({ isCreate = false }: { isCreate?: boolean }) => {
-  let { id } = useParams()
+  const { id } = useParams()
   const navigate = useNavigate()
   const isEditMode = !isCreate
 
@@ -96,7 +97,6 @@ const ProviderForm = ({ isCreate = false }: { isCreate?: boolean }) => {
     if (!window.confirm('确定要删除这个模型吗？')) return
 
     try {
-      // @ts-ignore
       const res = await deleteModelById(modelId)
       console.log('🔧 删除结果:', res)
       toast.success('删除成功')
@@ -104,7 +104,7 @@ const ProviderForm = ({ isCreate = false }: { isCreate?: boolean }) => {
         const updatedModels = await loadModelsById(id)
         setModels(updatedModels)
       }
-    } catch (e) {
+    } catch {
       toast.error('删除异常')
     }
   }
@@ -123,16 +123,16 @@ const ProviderForm = ({ isCreate = false }: { isCreate?: boolean }) => {
       }
       setTesting(true)
       await testConnection({
-        id,
-        api_key: values.apiKey,
+        api_key: values.apiKey || '',
         base_url: values.baseUrl
       })
 
       toast.success('测试连通性成功 🎉')
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('连接失败', error)
-      const msg = error?.response?.data?.msg || error?.message || '未知错误'
+      const err = error as AxiosError<{ msg?: string }>
+      const msg = err?.response?.data?.msg || err?.message || '未知错误'
       toast.error(`连接失败: ${msg}`)
     } finally {
       setTesting(false)
@@ -149,18 +149,16 @@ const ProviderForm = ({ isCreate = false }: { isCreate?: boolean }) => {
       }
 
       if (isEditMode && id) {
-        // @ts-ignore
         await updateProvider({ ...payload, id })
         toast.success('更新供应商成功')
       } else {
-        // @ts-ignore
         const newId = await addNewProvider(payload)
         if (newId) {
           toast.success('新增供应商成功')
           navigate(`/settings/model/${newId}`, { replace: true })
         }
       }
-    } catch (error) {
+    } catch {
       toast.error('保存失败')
     }
   }
@@ -252,7 +250,7 @@ const ProviderForm = ({ isCreate = false }: { isCreate?: boolean }) => {
                       await deleteProvider(id!)
                       toast.success('删除成功')
                       navigate('/settings/model')
-                    } catch (e) {
+                    } catch {
                       toast.error('删除失败')
                     }
                   }

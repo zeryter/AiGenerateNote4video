@@ -108,7 +108,7 @@ sudo apt install ffmpeg
 
 [docker 部署](https://github.com/JefferyHcool/bilinote-deploy/blob/master/README.md)
 
-## 🧠 TODO
+## � TODO
 
 - [x] 支持抖音及快手等视频平台
 - [x] 支持前端设置切换 AI 模型切换、语音转文字模型

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, validator, field_validator
 from dataclasses import asdict
 
@@ -15,6 +15,7 @@ from app.enmus.exception import NoteErrorEnum
 from app.enmus.note_enums import DownloadQuality
 from app.exceptions.note import NoteError
 from app.services.note import NoteGenerator, logger
+from app.services.task_queue import enqueue_task
 from app.utils.response import ResponseWrapper as R
 from app.utils.url_parser import extract_video_id
 from app.validators.video_url_validator import is_supported_video_url
@@ -31,8 +32,9 @@ router = APIRouter()
 
 
 class RecordRequest(BaseModel):
-    video_id: str
-    platform: str
+    video_id: Optional[str] = None
+    platform: Optional[str] = None
+    task_id: Optional[str] = None
 
 
 class VideoRequest(BaseModel):
@@ -122,45 +124,11 @@ def save_note_to_file(task_id: str, note):
         json.dump(asdict(note), f, ensure_ascii=False, indent=2)
 
 
-def run_note_task(task_id: str, video_url: str, platform: str, quality: DownloadQuality,
-                  link: bool = False, screenshot: bool = False, model_name: str = None, provider_id: str = None,
-                  _format: list = None, style: str = None, extras: str = None, video_understanding: bool = False,
-                  video_interval=0, grid_size=[]
-                  ):
-
-    if not model_name or not provider_id:
-        raise HTTPException(status_code=400, detail="请选择模型和提供者")
-
-    note = NoteGenerator().generate(
-        video_url=video_url,
-        platform=platform,
-        quality=quality,
-        task_id=task_id,
-        model_name=model_name,
-        provider_id=provider_id,
-        link=link,
-        _format=_format,
-        style=style,
-        extras=extras,
-        screenshot=screenshot
-        , video_understanding=video_understanding,
-        video_interval=video_interval,
-        grid_size=grid_size
-    )
-    logger.info(f"Note generated: {task_id}")
-    if not note or not note.markdown:
-        logger.warning(f"任务 {task_id} 执行失败，跳过保存")
-        return
-    save_note_to_file(task_id, note)
-
-
-
 @router.post('/delete_task')
 def delete_task(data: RecordRequest):
     try:
-        # TODO: 待持久化完成
-        # NoteGenerator().delete_note(video_id=data.video_id, platform=data.platform)
-        return R.success(msg='删除成功')
+        deleted_count = NoteGenerator().delete_note(video_id=data.video_id or "", platform=data.platform or "", task_id=data.task_id)
+        return R.success({"deleted": deleted_count}, msg='删除成功')
     except Exception as e:
         return R.error(msg=e)
 
@@ -178,7 +146,7 @@ async def upload(file: UploadFile = File(...)):
 
 
 @router.post("/generate_note")
-def generate_note(data: VideoRequest, background_tasks: BackgroundTasks):
+def generate_note(data: VideoRequest):
     try:
 
         video_id = extract_video_id(data.video_url, data.platform)
@@ -194,15 +162,29 @@ def generate_note(data: VideoRequest, background_tasks: BackgroundTasks):
             # 如果传了task_id，说明是重试！
             task_id = data.task_id
             # 更新之前的状态
-            NoteGenerator()._update_status(task_id, TaskStatus.PENDING)
+            NoteGenerator()._update_status(task_id, TaskStatus.QUEUED)
             logger.info(f"重试模式，复用已有 task_id={task_id}")
         else:
             # 正常新建任务
             task_id = str(uuid.uuid4())
+            NoteGenerator()._update_status(task_id, TaskStatus.QUEUED)
 
-        background_tasks.add_task(run_note_task, task_id, data.video_url, data.platform, data.quality, data.link,
-                                  data.screenshot, data.model_name, data.provider_id, data.format, data.style,
-                                  data.extras, data.video_understanding, data.video_interval, data.grid_size)
+        enqueue_task({
+            "task_id": task_id,
+            "video_url": data.video_url,
+            "platform": data.platform,
+            "quality": data.quality,
+            "link": data.link,
+            "screenshot": data.screenshot,
+            "model_name": data.model_name,
+            "provider_id": data.provider_id,
+            "format": data.format,
+            "style": data.style,
+            "extras": data.extras,
+            "video_understanding": data.video_understanding,
+            "video_interval": data.video_interval,
+            "grid_size": data.grid_size,
+        })
         return R.success({"task_id": task_id})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -240,7 +222,7 @@ def get_task_status(task_id: str):
             else:
                 # 理论上不会出现，保险处理
                 return R.success({
-                    "status": TaskStatus.PENDING.value,
+                    "status": TaskStatus.QUEUED.value,
                     "message": "任务完成，但结果文件未找到",
                     "task_id": task_id
                 })
@@ -270,9 +252,8 @@ def get_task_status(task_id: str):
             "task_id": task_id
         })
 
-    # 什么都没有，默认PENDING
     return R.success({
-        "status": TaskStatus.PENDING.value,
+        "status": TaskStatus.QUEUED.value,
         "message": "任务排队中",
         "task_id": task_id
     })
@@ -317,7 +298,7 @@ def list_tasks(tags: Optional[str] = None, tags_match: str = "any"):
             "id": t.task_id,
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "platform": t.platform,
-            "status": "PENDING"  # Default
+            "status": "QUEUED"
         }
         
         # Determine status
@@ -325,7 +306,7 @@ def list_tasks(tags: Optional[str] = None, tags_match: str = "any"):
             try:
                 with open(status_path, "r", encoding="utf-8") as f:
                     s_data = json.load(f)
-                    task_data["status"] = s_data.get("status", "PENDING")
+                    task_data["status"] = s_data.get("status", "QUEUED")
             except:
                 pass
         # If no status file but result exists -> SUCCESS

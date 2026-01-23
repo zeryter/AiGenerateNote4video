@@ -1,8 +1,21 @@
 import { useEffect, useRef } from 'react'
+import type { AxiosError } from 'axios'
 import { useTaskStore } from '@/store/taskStore'
 import { get_task_status } from '@/services/note.ts'
 import toast from 'react-hot-toast'
 import { makeVideoKey, useTagStore } from '@/store/tagStore'
+import type { AudioMeta, Task, TaskStatus, Transcript } from '@/store/taskStore'
+
+type TaskStatusResponse = {
+  status?: TaskStatus
+  message?: string
+  result?: {
+    markdown?: Task['markdown']
+    transcript?: Transcript
+    audio_meta?: AudioMeta
+  }
+  tags?: string[]
+}
 
 export const useTaskPolling = (interval = 3000) => {
   const tasks = useTaskStore(state => state.tasks)
@@ -24,12 +37,13 @@ export const useTaskPolling = (interval = 3000) => {
       for (const task of pendingTasks) {
         try {
           console.log('🔄 正在轮询任务：', task.id)
-          const res: any = await get_task_status(task.id)
-          const { status } = res
+          const res = (await get_task_status(task.id)) as unknown as TaskStatusResponse
+          const { status, message } = res
+          const nextMessage = typeof message === 'string' && message.trim().length > 0 ? message : undefined
 
-          if (status && status !== task.status) {
+          if (status && (status !== task.status || nextMessage !== task.statusMessage)) {
             if (status === 'SUCCESS') {
-              const { markdown, transcript, audio_meta } = res.result
+              const { markdown, transcript, audio_meta } = res.result ?? {}
               const incomingTags = Array.isArray(res.tags) ? res.tags : []
               const key = makeVideoKey(audio_meta?.platform, audio_meta?.video_id)
               if (key && incomingTags.length > 0) {
@@ -38,24 +52,36 @@ export const useTaskPolling = (interval = 3000) => {
               toast.success('笔记生成成功')
               updateTaskContent(task.id, {
                 status,
-                markdown,
-                transcript,
-                audioMeta: audio_meta,
+                markdown: markdown ?? task.markdown,
+                transcript: transcript ?? task.transcript,
+                audioMeta: audio_meta ?? task.audioMeta,
                 tags: incomingTags.length > 0 ? incomingTags : undefined,
+                statusMessage: nextMessage,
               })
             } else if (status === 'FAILED') {
-              updateTaskContent(task.id, { status })
+              updateTaskContent(task.id, { status, statusMessage: nextMessage })
               console.warn(`⚠️ 任务 ${task.id} 失败`)
             } else {
-              updateTaskContent(task.id, { status })
+              updateTaskContent(task.id, { status, statusMessage: nextMessage })
             }
           }
-        } catch (e) {
-          console.error('❌ 任务轮询网络异常（暂不处理，等待重试）：', e)
+        } catch (error: unknown) {
+          const err = error as AxiosError<{ code?: number; msg?: string }> & {
+            code?: number
+            msg?: string
+          }
+          const errCode = err?.response?.data?.code ?? (typeof err?.code === 'number' ? err.code : undefined)
+          const errMsg = err?.response?.data?.msg ?? err?.msg
+          if (errCode === 500 && typeof errMsg === 'string') {
+            updateTaskContent(task.id, { status: 'FAILED', statusMessage: errMsg })
+            console.warn(`⚠️ 任务 ${task.id} 失败：${errMsg}`)
+            continue
+          }
+          console.error('❌ 任务轮询网络异常（暂不处理，等待重试）：', error)
         }
       }
     }, interval)
 
     return () => clearInterval(timer)
-  }, [interval])
+  }, [interval, updateTaskContent])
 }

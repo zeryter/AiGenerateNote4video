@@ -1,21 +1,25 @@
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { useSearchParams, Link } from "react-router-dom";
+import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { Sparkles, Home } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useTaskStore, Markdown } from "@/store/taskStore";
 import { useProviderStore } from "@/store/providerStore";
 import { useModelStore } from "@/store/modelStore";
 import toast from "react-hot-toast";
+import { EmptyState } from "@/components/ui/empty-state";
 
 import { useVideoPlayer } from "./hooks/useVideoPlayer";
 import WorkspaceHeader from "./components/WorkspaceHeader";
 import VideoPlayerPanel from "./components/VideoPlayerPanel";
 import AiNotePanel from "./components/AiNotePanel";
 import UserNotePanel from "./components/UserNotePanel";
+import { getVideoUrl } from "@/utils/mediaHelper";
+import PlaylistPanel from "./components/PlaylistPanel";
 
 import { statusMap } from "@/constant/status";
 
 export default function WorkspacePage() {
+    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const taskId = searchParams.get("taskId");
 
@@ -33,6 +37,18 @@ export default function WorkspacePage() {
         const id = taskId || currentTaskId;
         return tasks.find((t) => t.id === id) || null;
     }, [taskId, currentTaskId, tasks]);
+    const videoUrl = useMemo(() => {
+        if (!task) return "";
+        return getVideoUrl(
+            task.formData?.video_url || "",
+            task.formData?.platform,
+            task.audioMeta?.file_path
+        );
+    }, [task]);
+    const isLocalVideo = useMemo(() => {
+        if (!task) return false;
+        return task.formData?.platform === "local" || videoUrl.includes("localhost");
+    }, [task, videoUrl]);
 
     const [myNote, setMyNote] = useState("");
     const [copied, setCopied] = useState(false);
@@ -106,12 +122,17 @@ export default function WorkspacePage() {
 
     if (!task) {
         return (
-            <div className="h-full w-full flex flex-col items-center justify-center gap-4 text-muted-foreground">
-                <Sparkles size={48} className="text-primary/50" />
-                <p>没有选中的任务</p>
-                <Link to="/" className="text-primary hover:underline flex items-center gap-2">
-                    <Home size={16} /> 返回首页
-                </Link>
+            <div className="h-full w-full flex items-center justify-center">
+                <EmptyState
+                    icon={<Sparkles size={48} className="text-primary/50" />}
+                    title="没有选中的任务"
+                    description="从历史记录或首页选择一个任务"
+                    action={
+                        <Link to="/" className="text-primary hover:underline inline-flex items-center gap-2">
+                            <Home size={16} /> 返回首页
+                        </Link>
+                    }
+                />
             </div>
         );
     }
@@ -146,6 +167,10 @@ export default function WorkspacePage() {
             toast.success("重试任务已提交");
         }
     };
+    const handleSelectTask = (id: string) => {
+        setCurrentTask(id);
+        navigate(`/workspace?taskId=${id}`, { state: { from: "/workspace" } });
+    };
 
     return (
         <div className="h-full w-full flex flex-col">
@@ -167,6 +192,10 @@ export default function WorkspacePage() {
                                 videoRef={videoRef}
                                 reactPlayerRef={reactPlayerRef}
                             />
+                            <PlaylistPanel
+                                currentTask={task}
+                                onSelectTask={handleSelectTask}
+                            />
                             <AiNotePanel
                                 isLoading={isLoading}
                                 markdownContent={markdownContent}
@@ -184,6 +213,7 @@ export default function WorkspacePage() {
                             onNoteChange={handleNoteChange}
                             getCurrentTime={getCurrentTime}
                             onSeek={handleSeek}
+                            isLocalVideo={isLocalVideo}
                         />
                     </Panel>
                 </PanelGroup>

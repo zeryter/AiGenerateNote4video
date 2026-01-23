@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
-import { getDownloaderCookie, updateDownloaderCookie } from '@/services/downloader' // 你自定义的请求
+import { getDownloaderCookie, updateDownloaderCookie } from '@/services/downloader'
 import { useParams } from 'react-router-dom'
 import { videoPlatforms } from '@/constant/note.ts'
 
@@ -22,12 +22,14 @@ const CookieSchema = z.object({
   cookie: z.string().min(10, '请填写有效 Cookie'),
 })
 
+type CookieFormValues = z.infer<typeof CookieSchema>
+
 const DownloaderForm = () => {
-  const form = useForm({
+  const form = useForm<CookieFormValues>({
     resolver: zodResolver(CookieSchema),
     defaultValues: { cookie: '' },
   })
-  const { id } = useParams()
+  const { id } = useParams<{ id: string }>()
 
   const [loading, setLoading] = useState(true)
 
@@ -35,11 +37,12 @@ const DownloaderForm = () => {
     const loadCookie = async () => {
       setLoading(true) // 🔁 切换平台时显示 loading
       try {
+        if (!id) return
         const res = await getDownloaderCookie(id)
         const cookie = res?.cookie || ''
         form.reset({ cookie }) // ✅ 正确重置表单值
-      } catch (e) {
-        toast.error('加载 Cookie 失败: ' + e)
+      } catch (error) {
+        toast.error('加载 Cookie 失败: ' + String(error))
         form.reset({ cookie: '' }) // ❗失败时也要清空旧值
       } finally {
         setLoading(false)
@@ -47,16 +50,17 @@ const DownloaderForm = () => {
     }
 
     if (id) loadCookie()
-  }, [id]) // 🔁 每当 id 变化时触发
+  }, [id, form])
 
-  const onSubmit = async values => {
+  const onSubmit = async (values: CookieFormValues) => {
+    if (!id) return
     try {
       await updateDownloaderCookie({
         platform: id,
         cookie: String(values.cookie),
       })
       toast.success('保存成功')
-    } catch (e) {
+    } catch {
       toast.error('保存失败')
     }
   }

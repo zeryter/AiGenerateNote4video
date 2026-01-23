@@ -7,6 +7,7 @@ import { useModelStore } from "@/store/modelStore";
 import { generateNote } from "@/services/note";
 import { uploadFile } from "@/services/upload";
 import { detectPlatform } from "@/utils/platformHelper";
+import type { TaskFormData } from "@/store/taskStore";
 
 export function useTaskCreation() {
     const navigate = useNavigate();
@@ -50,93 +51,165 @@ export function useTaskCreation() {
     const selectedModel =
         modelsForProvider.find((m) => m.model_name === effectiveSelectedModelName) || modelsForProvider[0];
 
-    const handleSubmit = async (e?: React.FormEvent) => {
-        if (e) e.preventDefault();
-        if (!url.trim()) return;
+    type QueueItem =
+        | { kind: "url"; url: string }
+        | { kind: "file"; file: File };
 
-        if (!selectedProvider || !selectedModel) {
-            toast.error("请先在设置中配置模型和提供者");
-            navigate("/settings/model");
-            return;
-        }
+    const queueRef = useRef<QueueItem[]>([]);
+    const isProcessingRef = useRef(false);
 
-        setIsLoading(true);
-        try {
-            const platform = detectPlatform(url);
-            const formData = {
-                video_url: url,
+    const parseUrls = useCallback((text: string) => {
+        return text
+            .split(/[\s,]+/g)
+            .map((s) => s.trim())
+            .filter(Boolean);
+    }, []);
+
+    const getDefaultTaskFormData = useCallback(
+        (videoUrl: string, platform: string): TaskFormData => {
+            return {
+                video_url: videoUrl,
                 platform,
                 quality: "medium",
-                model_name: selectedModel.model_name,
-                provider_id: String(selectedProvider.id),
+                model_name: selectedModel?.model_name ?? "",
+                provider_id: String(selectedProvider?.id ?? ""),
                 format: [],
                 style: selectedStyle,
                 link: false,
                 screenshot: false,
-                grid_size: [],
+                grid_size: [3, 3],
             };
+        },
+        [selectedModel?.model_name, selectedProvider?.id, selectedStyle]
+    );
 
+    const createTaskFromUrl = useCallback(
+        async (singleUrl: string) => {
+            const platform = detectPlatform(singleUrl);
+            const formData = getDefaultTaskFormData(singleUrl, platform);
             const res = await generateNote(formData);
-            if (res?.task_id) {
-                addPendingTask(res.task_id, platform, formData);
-                setCurrentTask(res.task_id);
-                navigate(`/workspace?taskId=${res.task_id}`, { state: { from: '/' } });
-            }
-        } catch (err: any) {
-            toast.error(err?.message || "提交失败");
-        } finally {
-            setIsLoading(false);
-        }
-    };
+            const taskId = res?.task_id;
+            if (!taskId) return null;
+            addPendingTask(taskId, platform, formData);
+            setCurrentTask(taskId);
+            return taskId;
+        },
+        [addPendingTask, getDefaultTaskFormData, setCurrentTask]
+    );
 
-    const handleFileUpload = useCallback(async (file: File) => {
-        if (!selectedProvider || !selectedModel) {
-            toast.error("请先在设置中配置模型和提供者");
-            navigate("/settings/model");
-            return;
-        }
-
-        setIsLoading(true);
-        try {
+    const createTaskFromFile = useCallback(
+        async (file: File) => {
             const formDataUpload = new FormData();
             formDataUpload.append("file", file);
             const uploadRes = await uploadFile(formDataUpload);
             const fileUrl = uploadRes?.url;
+            if (!fileUrl) return null;
 
-            if (!fileUrl) {
-                toast.error("文件上传失败");
-                return;
-            }
-
-            const formData = {
-                video_url: fileUrl,
-                platform: "local",
-                quality: "medium",
-                model_name: selectedModel.model_name,
-                provider_id: String(selectedProvider.id),
-                format: [],
-                style: selectedStyle,
-                link: false,
-                screenshot: false,
-                grid_size: [],
-            };
-
+            const formData = getDefaultTaskFormData(fileUrl, "local");
             const res = await generateNote(formData);
-            if (res?.task_id) {
-                addPendingTask(res.task_id, "local", formData);
-                setCurrentTask(res.task_id);
-                navigate(`/workspace?taskId=${res.task_id}`, { state: { from: '/' } });
+            const taskId = res?.task_id;
+            if (!taskId) return null;
+            addPendingTask(taskId, "local", formData);
+            setCurrentTask(taskId);
+            return taskId;
+        },
+        [addPendingTask, getDefaultTaskFormData, setCurrentTask]
+    );
+
+    const processQueue = useCallback(async () => {
+        if (isProcessingRef.current) return;
+        if (!selectedProvider || !selectedModel) {
+            toast.error("请先在设置中配置模型和提供者");
+            navigate("/settings/model");
+            queueRef.current = [];
+            return;
+        }
+
+        isProcessingRef.current = true;
+        setIsLoading(true);
+
+        let lastTaskId: string | null = null;
+        let succeeded = 0;
+        let failed = 0;
+
+        try {
+            while (queueRef.current.length > 0) {
+                const item = queueRef.current.shift();
+                if (!item) continue;
+
+                try {
+                    if (item.kind === "url") {
+                        const taskId = await createTaskFromUrl(item.url);
+                        if (taskId) {
+                            lastTaskId = taskId;
+                            succeeded += 1;
+                        } else {
+                            failed += 1;
+                        }
+                    } else {
+                        const taskId = await createTaskFromFile(item.file);
+                        if (taskId) {
+                            lastTaskId = taskId;
+                            succeeded += 1;
+                        } else {
+                            failed += 1;
+                        }
+                    }
+                } catch (error: unknown) {
+                    failed += 1;
+                    const message = (error as { message?: string })?.message;
+                    toast.error(message || "提交失败");
+                }
             }
-        } catch (err: any) {
-            toast.error(err?.message || "上传失败");
         } finally {
+            isProcessingRef.current = false;
             setIsLoading(false);
         }
-    }, [selectedProvider, selectedModel, selectedStyle, navigate, addPendingTask, setCurrentTask]);
+
+        if (succeeded > 0) toast.success(`已提交 ${succeeded} 个任务${failed ? `，失败 ${failed} 个` : ""}`);
+        if (lastTaskId) navigate(`/workspace?taskId=${lastTaskId}`, { state: { from: "/" } });
+    }, [createTaskFromFile, createTaskFromUrl, navigate, selectedModel, selectedProvider]);
+
+    const enqueue = useCallback(
+        (items: QueueItem[]) => {
+            if (items.length === 0) return;
+            queueRef.current.push(...items);
+            void processQueue();
+        },
+        [processQueue]
+    );
+
+    const handleSubmit = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        const urls = parseUrls(url);
+        if (urls.length === 0) return;
+        setUrl("");
+        enqueue(urls.map((u) => ({ kind: "url", url: u })));
+    };
+
+    const handleFilesUpload = useCallback(
+        (files: File[]) => {
+            const filtered = files.filter((f) => f.type.startsWith("video/") || f.type.startsWith("audio/"));
+            if (filtered.length === 0) {
+                toast.error("请选择视频或音频文件");
+                return;
+            }
+            enqueue(filtered.map((file) => ({ kind: "file", file })));
+        },
+        [enqueue]
+    );
+
+    const handleFileUpload = useCallback(
+        async (file: File) => {
+            handleFilesUpload([file]);
+        },
+        [handleFilesUpload]
+    );
 
     const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) handleFileUpload(file);
+        const files = Array.from(e.target.files ?? []);
+        if (files.length > 0) handleFilesUpload(files);
+        e.target.value = "";
     };
 
     return {
@@ -154,6 +227,7 @@ export function useTaskCreation() {
         setSelectedStyle,
         handleSubmit,
         handleFileUpload,
+        handleFilesUpload,
         handleFileInputChange,
     };
 }

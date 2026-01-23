@@ -33,7 +33,7 @@ export default function HomePage() {
         setSelectedModelName,
         setSelectedStyle,
         handleSubmit,
-        handleFileUpload,
+        handleFilesUpload,
         handleFileInputChange,
     } = useTaskCreation();
 
@@ -42,6 +42,11 @@ export default function HomePage() {
 
     const tasks = useTaskStore((s) => s.tasks);
     const setCurrentTask = useTaskStore((s) => s.setCurrentTask);
+    const needsModelSetup = providers.length === 0 || modelsForProvider.length === 0;
+    const setupHint =
+        providers.length === 0
+            ? "尚未配置模型供应商，先完成模型配置后再开始生成笔记。"
+            : "当前供应商未启用模型，先在设置中启用模型后再开始生成笔记。";
 
     useEffect(() => {
         fetchProviders();
@@ -58,12 +63,13 @@ export default function HomePage() {
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file && (file.type.startsWith("video/") || file.type.startsWith("audio/"))) {
-            handleFileUpload(file);
-        } else {
+        const files = Array.from(e.dataTransfer.files ?? []);
+        const filtered = files.filter((f) => f.type.startsWith("video/") || f.type.startsWith("audio/"));
+        if (filtered.length === 0) {
             toast.error("请拖入视频或音频文件");
+            return;
         }
+        handleFilesUpload(filtered);
     };
 
     return (
@@ -88,6 +94,26 @@ export default function HomePage() {
 
             <div className="flex flex-col items-center max-w-2xl w-full">
                 <HeroSection />
+
+                {needsModelSetup && (
+                    <motion.div
+                        className="mt-4 w-full max-w-xl rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left text-sm text-amber-600"
+                        initial={{ y: 12, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        transition={{ delay: 0.25 }}
+                    >
+                        <div className="flex flex-col gap-2">
+                            <div className="font-medium">{setupHint}</div>
+                            <button
+                                type="button"
+                                onClick={() => navigate("/settings/model")}
+                                className="self-start rounded-full border border-amber-500/40 bg-white/60 px-3 py-1 text-xs text-amber-700 hover:border-amber-500/60 hover:text-amber-800 transition-colors"
+                            >
+                                去配置模型
+                            </button>
+                        </div>
+                    </motion.div>
+                )}
 
                 <UrlInput
                     url={url}
@@ -144,6 +170,7 @@ export default function HomePage() {
                     ref={fileInputRef}
                     type="file"
                     accept="video/*,audio/*"
+                    multiple
                     className="hidden"
                     onChange={handleFileInputChange}
                 />
