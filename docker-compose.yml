@@ -12,6 +12,11 @@ services:
       - BACKEND_HOST=${BACKEND_HOST}
     volumes:
       - ./backend:/app
+      - ./data/bili_note.db:/app/bili_note.db
+      - ./data/note_results:/app/note_results
+      - ./data/static:/app/static
+      - ./data/uploads:/app/uploads
+      - ./data/models:/app/models
     expose:
       - "${BACKEND_PORT}"  # 不再对外暴露，用于 nginx 内部通信
 
@@ -28,10 +33,12 @@ services:
   nginx:
     container_name: bilinote-nginx
     image: nginx:1.25-alpine
+    env_file:
+      - .env
     ports:
       - "${APP_PORT}:80"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/default.conf:/etc/nginx/templates/default.conf.template
     depends_on:
       - backend
       - frontend
