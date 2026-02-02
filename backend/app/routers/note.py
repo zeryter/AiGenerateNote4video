@@ -37,6 +37,11 @@ class RecordRequest(BaseModel):
     task_id: Optional[str] = None
 
 
+class UpdateTaskTitleRequest(BaseModel):
+    task_id: str
+    title: str
+
+
 class VideoRequest(BaseModel):
     video_url: str
     platform: str
@@ -131,6 +136,38 @@ def delete_task(data: RecordRequest):
         return R.success({"deleted": deleted_count}, msg='删除成功')
     except Exception as e:
         return R.error(msg=e)
+
+
+@router.post('/update_task_title')
+def update_task_title(data: UpdateTaskTitleRequest):
+    """Update the title of a task"""
+    try:
+        result_path = os.path.join(NOTE_OUTPUT_DIR, f"{data.task_id}.json")
+        
+        if not os.path.exists(result_path):
+            raise HTTPException(status_code=404, detail="任务不存在")
+        
+        # Read existing task data
+        with open(result_path, "r", encoding="utf-8") as f:
+            task_data = json.load(f)
+        
+        # Update title in audio_meta
+        if "audio_meta" not in task_data:
+            task_data["audio_meta"] = {}
+        
+        task_data["audio_meta"]["title"] = data.title
+        
+        # Write back to file
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(task_data, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"Updated title for task {data.task_id} to: {data.title}")
+        return R.success({"task_id": data.task_id, "title": data.title}, msg='标题更新成功')
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update task title: {e}")
+        return R.error(msg=str(e))
 
 
 @router.post("/upload")

@@ -85,6 +85,25 @@ class LocalDownloader(Downloader, ABC):
             return output_path
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"mp3 文件生成失败: {output_path}") from e
+    def get_duration(self, input_path: str) -> float:
+        """
+        获取媒体文件时长（秒）
+        """
+        try:
+            command = [
+                'ffprobe',
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                input_path
+            ]
+            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if result.returncode == 0:
+                return float(result.stdout.strip())
+        except Exception as e:
+            print(f"Error getting duration: {e}")
+        return 0
+
     def download_video(self, video_url: str, output_dir: str = None) -> str:
         """
         处理本地文件路径，返回视频文件路径
@@ -97,6 +116,7 @@ class LocalDownloader(Downloader, ABC):
         if not os.path.exists(video_url):
             raise FileNotFoundError()
         return video_url
+
     def download(
             self,
             video_url: str,
@@ -126,13 +146,16 @@ class LocalDownloader(Downloader, ABC):
         file_path=self.convert_to_mp3(video_url)
         cover_path = self.extract_cover(video_url)
         cover_url = save_cover_to_static(cover_path)
+        
+        # Get duration
+        duration = self.get_duration(video_url)
 
         print('file——path',file_path)
         return AudioDownloadResult(
             file_path=file_path,
             title=title,
-            duration=0,  # 可选：后续加上读取时长
-            cover_url=cover_url,  # 暂无封面
+            duration=duration,
+            cover_url=cover_url,
             platform="local",
             video_id=title,
             raw_info={

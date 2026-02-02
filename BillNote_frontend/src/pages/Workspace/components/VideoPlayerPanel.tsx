@@ -1,10 +1,11 @@
 import { Sparkles, Subtitles } from "lucide-react";
 import { ReactPlayer } from "../hooks/useVideoPlayer";
 import { getCoverUrl, getVideoUrl } from "@/utils/mediaHelper";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import type { RefObject } from "react";
 import toast from "react-hot-toast";
 import type { Task } from "@/store/taskStore";
+import { usePlaybackStore } from "@/store/playbackStore";
 
 interface VideoPlayerPanelProps {
     task: Task;
@@ -18,10 +19,94 @@ export default function VideoPlayerPanel({ task, videoRef, reactPlayerRef }: Vid
         task.formData?.platform,
         task.audioMeta?.file_path
     );
+
+    // Debug video selection
+    useEffect(() => {
+        console.log("VideoPlayerPanel Debug:", {
+            taskId: task.id,
+            platform: task.formData?.platform,
+            formDataVideoUrl: task.formData?.video_url,
+            audioMetaFilePath: task.audioMeta?.file_path,
+            calculatedVideoUrl: videoUrl
+        });
+    }, [task.id, task.formData, task.audioMeta, videoUrl]);
+
     const isLocalVideo = task.formData?.platform === "local" || videoUrl.includes("localhost");
     const isYouTube = videoUrl.includes("youtube.com") || videoUrl.includes("youtu.be");
     const segments = useMemo(() => task.transcript?.segments ?? [], [task.transcript?.segments]);
     const [showSubtitles, setShowSubtitles] = useState(false);
+    const [hasRestoredPosition, setHasRestoredPosition] = useState(false);
+
+    // Playback progress
+    const { getProgress, setProgress } = usePlaybackStore();
+    const savedProgress = getProgress(task.id);
+
+    // Restore playback position when video loads
+    const handleVideoLoadedMetadata = useCallback(() => {
+        if (hasRestoredPosition) return;
+        if (savedProgress && videoRef.current) {
+            const video = videoRef.current;
+            // Only restore if not too close to the end
+            if (savedProgress.currentTime < savedProgress.duration * 0.95) {
+                video.currentTime = savedProgress.currentTime;
+                toast.success(`已跳转到上次播放位置 ${Math.floor(savedProgress.currentTime / 60)}:${String(Math.floor(savedProgress.currentTime % 60)).padStart(2, '0')}`, {
+                    duration: 2000,
+                    icon: '⏩',
+                });
+            }
+            setHasRestoredPosition(true);
+        }
+    }, [savedProgress, hasRestoredPosition, videoRef]);
+
+    // Save progress periodically
+    useEffect(() => {
+        if (!isLocalVideo || !videoRef.current) return;
+
+        const video = videoRef.current;
+        let lastSaveTime = 0;
+
+        const handleTimeUpdate = () => {
+            const currentTime = video.currentTime;
+            const duration = video.duration;
+
+            // Save every 5 seconds of playback
+            if (currentTime - lastSaveTime >= 5) {
+                setProgress(task.id, currentTime, duration);
+                lastSaveTime = currentTime;
+            }
+        };
+
+        const handlePause = () => {
+            // Save immediately on pause
+            if (video.duration > 0) {
+                setProgress(task.id, video.currentTime, video.duration);
+            }
+        };
+
+        const handleEnded = () => {
+            // Clear progress when video ends
+            setProgress(task.id, video.duration, video.duration);
+        };
+
+        video.addEventListener('timeupdate', handleTimeUpdate);
+        video.addEventListener('pause', handlePause);
+        video.addEventListener('ended', handleEnded);
+
+        return () => {
+            video.removeEventListener('timeupdate', handleTimeUpdate);
+            video.removeEventListener('pause', handlePause);
+            video.removeEventListener('ended', handleEnded);
+            // Save on unmount
+            if (video.duration > 0 && video.currentTime > 3) {
+                setProgress(task.id, video.currentTime, video.duration);
+            }
+        };
+    }, [isLocalVideo, task.id, setProgress, videoRef]);
+
+    // Reset restored position flag when task changes
+    useEffect(() => {
+        setHasRestoredPosition(false);
+    }, [task.id]);
 
     const vttContent = useMemo(() => {
         if (!isLocalVideo || segments.length === 0) return "";
@@ -96,6 +181,7 @@ export default function VideoPlayerPanel({ task, videoRef, reactPlayerRef }: Vid
                             className="w-full h-full object-contain"
                             controls
                             poster={coverUrl}
+                            onLoadedMetadata={handleVideoLoadedMetadata}
                         >
                             {showSubtitles && subtitleUrl && (
                                 <track kind="subtitles" src={subtitleUrl} srcLang="zh" label="中文" default />

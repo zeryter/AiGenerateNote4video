@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Clock, Trash2, Youtube, Play, FileVideo, Calendar, Search, Tag, ArrowUpDown, CheckSquare, Square, Plus, RefreshCw } from "lucide-react";
+import { Clock, Trash2, Youtube, Play, FileVideo, Calendar, Search, Tag, ArrowUpDown, CheckSquare, Square, Plus, RefreshCw, FileText, PlayCircle, Pencil, Check, X, ListPlus } from "lucide-react";
 import { useTaskStore, type Task } from "@/store/taskStore";
 import { EmptyState } from "@/components/ui/empty-state";
 import { motion, AnimatePresence } from "framer-motion";
@@ -7,8 +7,13 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import toast from "react-hot-toast";
 import { makeVideoKey, useTagStore } from "@/store/tagStore";
 import { usePlaylistStore } from "@/store/playlistStore";
+import { useDescriptionStore } from "@/store/descriptionStore";
+import { usePlaybackStore, formatTime } from "@/store/playbackStore";
 import { setVideoTags } from "@/services/tags";
+import { updateTaskTitle as updateTaskTitleAPI } from "@/services/note";
 import { statusMap } from "@/constant/status";
+import DescriptionEditor from "@/components/DescriptionEditor";
+import { Tooltip } from "antd";
 
 // Helper to get platform icon
 function PlatformIcon({ platform }: { platform: string }) {
@@ -47,12 +52,25 @@ export default function HistoryPage() {
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const setTagsForKey = useTagStore((s) => s.setTagsForKey);
     const [batchTagInput, setBatchTagInput] = useState("");
+    const [showBatchTagDialog, setShowBatchTagDialog] = useState(false);
+    const [editingTitleTaskId, setEditingTitleTaskId] = useState<string | null>(null);
+    const [editingTitle, setEditingTitle] = useState("");
     const [batchSaving, setBatchSaving] = useState(false);
     const PAGE_SIZE = 50;
     const [currentPage, setCurrentPage] = useState(1);
 
+    // Description feature
+    const { getDescription, setDescription } = useDescriptionStore();
+    const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+    const editingTask = useMemo(() => tasks.find(t => t.id === editingTaskId), [tasks, editingTaskId]);
+
+    // Playback progress feature
+    const { getProgress, getProgressPercent } = usePlaybackStore();
+
     const SORT_KEY = "history_sort_v1";
     const FILTER_KEY = "history_tag_filters_v1";
+    const NO_TAG_VALUE = "__no_tag__";
+
     type SortOption =
         | "created_desc"
         | "created_asc"
@@ -107,7 +125,16 @@ export default function HistoryPage() {
         }
         const items = Array.from(counts.entries()).map(([tag, count]) => ({ tag, count }));
         items.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
-        return items;
+
+        // Count tasks with no tags
+        let noTagCount = 0;
+        for (const t of tasks) {
+            if (getTaskTags(t).length === 0) {
+                noTagCount++;
+            }
+        }
+
+        return { items, noTagCount };
     }, [tasks, getTaskTags]);
 
     const filteredTasks = tasks.filter((task) => {
@@ -116,9 +143,28 @@ export default function HistoryPage() {
         const query = searchTerm.toLowerCase();
         const matchesQuery = title.toLowerCase().includes(query) || url.toLowerCase().includes(query);
         if (!matchesQuery) return false;
+
         if (selectedTags.length === 0) return true;
+
         const taskTags = getTaskTags(task);
-        return selectedTags.every((t) => taskTags.includes(t));
+        const hasNoTagFilter = selectedTags.includes(NO_TAG_VALUE);
+
+        // If sorting by "No Tag", the task must have NO tags
+        if (hasNoTagFilter) {
+            // Also filter by other selected tags if any (which would technically return 0 results unless logic is OR, but usually filter is AND)
+            // Let's assume current logic is AND. If "No Tag" is selected, task must have empty tags.
+            // But if other tags are ALSO selected, it's impossible to have tags AND no tags.
+            // So we treat "No Tag" as exclusive requirement for empty tags.
+            if (taskTags.length > 0) return false;
+        }
+
+        // Check other selected tags
+        const otherTags = selectedTags.filter(t => t !== NO_TAG_VALUE);
+        if (otherTags.length > 0) {
+            return otherTags.every((t) => taskTags.includes(t));
+        }
+
+        return true;
     });
 
     const statusRank = useCallback((status: string, mode: SortOption) => {
@@ -141,12 +187,16 @@ export default function HistoryPage() {
                 return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
             }
             if (sortOption === "title_asc") {
-                const ta = (a.audioMeta?.title || "").localeCompare(b.audioMeta?.title || "");
+                const titleA = (a.audioMeta?.title || "").toLowerCase();
+                const titleB = (b.audioMeta?.title || "").toLowerCase();
+                const ta = titleA.localeCompare(titleB, undefined, { numeric: true, sensitivity: 'base' });
                 if (ta !== 0) return ta;
                 return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
             }
             if (sortOption === "title_desc") {
-                const ta = (b.audioMeta?.title || "").localeCompare(a.audioMeta?.title || "");
+                const titleA = (a.audioMeta?.title || "").toLowerCase();
+                const titleB = (b.audioMeta?.title || "").toLowerCase();
+                const ta = titleB.localeCompare(titleA, undefined, { numeric: true, sensitivity: 'base' });
                 if (ta !== 0) return ta;
                 return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
             }
@@ -163,7 +213,6 @@ export default function HistoryPage() {
         const map = new Map(tasks.map((t) => [t.id, t]));
         return selectedIds.map((id) => map.get(id)).filter((t): t is Task => Boolean(t));
     }, [selectedIds, tasks]);
-
     useEffect(() => {
         setCurrentPage(1);
     }, [searchTerm, selectedTags, sortOption, tasks.length]);
@@ -174,6 +223,34 @@ export default function HistoryPage() {
             removeTask(id);
             toast.success("已删除");
         }
+    };
+
+    const handleStartEditTitle = (e: React.MouseEvent, task: Task) => {
+        e.stopPropagation();
+        setEditingTitleTaskId(task.id);
+        setEditingTitle(task.audioMeta?.title || "");
+    };
+
+    const handleSaveTitle = async (e: React.MouseEvent, taskId: string) => {
+        e.stopPropagation();
+        if (!editingTitle.trim()) {
+            toast.error("标题不能为空");
+            return;
+        }
+        try {
+            await updateTaskTitleAPI(taskId, editingTitle);
+            useTaskStore.getState().updateTaskTitle(taskId, editingTitle);
+            setEditingTitleTaskId(null);
+            setEditingTitle("");
+        } catch (error) {
+            // Error already handled in API
+        }
+    };
+
+    const handleCancelEditTitle = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setEditingTitleTaskId(null);
+        setEditingTitle("");
     };
     const toggleSelected = (id: string) => {
         setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -238,17 +315,33 @@ export default function HistoryPage() {
         setBatchTagInput("");
     };
 
+    // New Playlist Logic: Contextual Play
+    const handlePlayContext = (task: Task, e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        // Replace playlist with current filtered list
+        // Note: sortedTasks represents the current view
+        if (sortedTasks.length > 0) {
+            replacePlaylist(sortedTasks);
+        }
+        navigate(`/workspace?taskId=${task.id}`, { state: { from: '/history' } });
+    };
+
+    const handlePlayAll = () => {
+        if (sortedTasks.length === 0) return;
+        handlePlayContext(sortedTasks[0]);
+    };
+
+    const handleAddToQueue = (e: React.MouseEvent, task: Task) => {
+        e.stopPropagation();
+        addTasksToPlaylist([task]);
+        toast.success("已添加到播放列表");
+    };
+
     return (
         <div className="h-full w-full flex flex-col p-4 md:p-8 max-w-7xl mx-auto">
             {/* Header */}
             <header className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
-                    <button
-                        onClick={() => navigate("/")}
-                        className="p-2 hover:bg-muted rounded-full transition-colors text-muted-foreground hover:text-foreground"
-                    >
-                        <ArrowLeft size={24} />
-                    </button>
                     <div>
                         <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
                             历史记录
@@ -258,6 +351,18 @@ export default function HistoryPage() {
                         </p>
                     </div>
                 </div>
+
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handlePlayAll}
+                        disabled={sortedTasks.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 text-sm font-medium"
+                    >
+                        <Play size={14} fill="currentColor" />
+                        播放全部
+                    </button>
+                </div>
+
 
                 <div className="flex items-center gap-2">
                     <div className="relative">
@@ -287,7 +392,7 @@ export default function HistoryPage() {
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     </div>
                 </div>
-            </header>
+            </header >
 
             <div className="mb-6 flex items-start gap-3">
                 <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-card/30 border border-border/50 text-sm text-muted-foreground shrink-0">
@@ -295,11 +400,31 @@ export default function HistoryPage() {
                     <span>标签筛选</span>
                 </div>
                 <div className="flex-1 flex flex-wrap gap-2">
-                    {tagStats.length === 0 ? (
+                    {tagStats.items.length === 0 && tagStats.noTagCount === 0 ? (
                         <span className="text-sm text-muted-foreground/70 py-2">暂无标签</span>
                     ) : (
                         <>
-                            {tagStats.slice(0, 20).map(({ tag, count }) => {
+                            {/* "No Tag" Option */}
+                            {tagStats.noTagCount > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSelectedTags((prev) => {
+                                            if (prev.includes(NO_TAG_VALUE)) return prev.filter((t) => t !== NO_TAG_VALUE);
+                                            return [...prev, NO_TAG_VALUE];
+                                        });
+                                    }}
+                                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-full border text-xs transition-colors ${selectedTags.includes(NO_TAG_VALUE)
+                                        ? "bg-primary/15 text-primary border-primary/30"
+                                        : "bg-card/30 text-muted-foreground border-border/50 hover:border-primary/30 hover:text-foreground"
+                                        }`}
+                                >
+                                    <span>无标签</span>
+                                    <span className="opacity-70">({tagStats.noTagCount})</span>
+                                </button>
+                            )}
+
+                            {tagStats.items.slice(0, 20).map(({ tag, count }) => {
                                 const active = selectedTags.includes(tag);
                                 return (
                                     <button
@@ -403,6 +528,69 @@ export default function HistoryPage() {
                 </div>
             </div>
 
+            {/* Continue Watching Section */}
+            {
+                (() => {
+                    const recentlyWatched = usePlaybackStore.getState().getRecentlyWatched();
+                    const continueWatchingTasks = recentlyWatched
+                        .map(taskId => tasks.find(t => t.id === taskId))
+                        .filter((t): t is Task => !!t && t.status === 'SUCCESS')
+                        .slice(0, 5);
+
+                    if (continueWatchingTasks.length === 0) return null;
+
+                    return (
+                        <div className="mb-6">
+                            <div className="flex items-center gap-2 mb-3">
+                                <PlayCircle size={16} className="text-primary" />
+                                <h2 className="text-sm font-medium">继续观看</h2>
+                            </div>
+                            <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
+                                {continueWatchingTasks.map(task => {
+                                    const progress = getProgress(task.id);
+                                    const percent = getProgressPercent(task.id);
+                                    return (
+                                        <button
+                                            key={task.id}
+                                            onClick={() => navigate(`/workspace?taskId=${task.id}`, { state: { from: '/history' } })}
+                                            className="flex-shrink-0 group relative w-36 rounded-lg border border-border/50 bg-card/30 hover:bg-card/60 hover:border-primary/30 transition-all overflow-hidden"
+                                        >
+                                            <div className="relative aspect-video bg-black/50">
+                                                {task.audioMeta?.cover_url ? (
+                                                    <img
+                                                        src={task.audioMeta.cover_url.startsWith('http') ? `/api/image_proxy?url=${encodeURIComponent(task.audioMeta.cover_url)}` : task.audioMeta.cover_url}
+                                                        alt="cover"
+                                                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center">
+                                                        <PlatformIcon platform={task.platform || task.formData.platform} />
+                                                    </div>
+                                                )}
+                                                {/* Progress bar */}
+                                                <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
+                                                    <div className="h-full bg-primary" style={{ width: `${percent}%` }} />
+                                                </div>
+                                                {/* Play overlay */}
+                                                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <PlayCircle size={24} className="text-white" />
+                                                </div>
+                                            </div>
+                                            <div className="p-2">
+                                                <p className="text-xs font-medium truncate">{task.audioMeta?.title || "未命名"}</p>
+                                                <p className="text-[10px] text-muted-foreground">
+                                                    {progress ? `${formatTime(progress.currentTime)} / ${formatTime(progress.duration)}` : ''}
+                                                </p>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                })()
+            }
+
             <div className="flex-1 overflow-auto pr-2 custom-scrollbar">
                 {sortedTasks.length === 0 ? (
                     <EmptyState
@@ -421,7 +609,8 @@ export default function HistoryPage() {
                                     initial={{ opacity: 0, scale: 0.95 }}
                                     animate={{ opacity: 1, scale: 1 }}
                                     exit={{ opacity: 0, scale: 0.95 }}
-                                    onClick={() => navigate(`/workspace?taskId=${task.id}`, { state: { from: '/history' } })}
+
+                                    onClick={(e) => handlePlayContext(task, e)}
                                     className={`group relative bg-card/40 hover:bg-card/80 border border-border/50 hover:border-primary/30 rounded-xl p-4 cursor-pointer transition-all hover:shadow-lg hover:-translate-y-1 overflow-hidden break-inside-avoid mb-4 ${selectedIds.includes(task.id) ? "ring-1 ring-primary/40" : ""}`}
                                 >
                                     <button
@@ -436,7 +625,7 @@ export default function HistoryPage() {
                                     </button>
                                     <div className="flex gap-4">
                                         {/* Thumbnail / Icon */}
-                                        <div className="w-20 h-20 rounded-lg bg-black/50 border border-border/30 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                        <div className="relative w-20 h-20 rounded-lg bg-black/50 border border-border/30 flex items-center justify-center overflow-hidden flex-shrink-0">
                                             {task.audioMeta?.cover_url ? (
                                                 <img
                                                     src={task.audioMeta.cover_url.startsWith('http') ? `/api/image_proxy?url=${encodeURIComponent(task.audioMeta.cover_url)}` : task.audioMeta.cover_url}
@@ -445,6 +634,28 @@ export default function HistoryPage() {
                                                 />
                                             ) : (
                                                 <PlatformIcon platform={task.platform || task.formData.platform} />
+                                            )}
+
+                                            {/* Playback Progress Overlay */}
+                                            {getProgress(task.id) && (
+                                                <>
+                                                    {/* Progress bar at bottom */}
+                                                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
+                                                        <div
+                                                            className="h-full bg-primary transition-all"
+                                                            style={{ width: `${getProgressPercent(task.id)}%` }}
+                                                        />
+                                                    </div>
+                                                    {/* Continue watching indicator */}
+                                                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <div className="flex flex-col items-center gap-0.5">
+                                                            <PlayCircle size={20} className="text-white" />
+                                                            <span className="text-[9px] text-white font-medium">
+                                                                {formatTime(getProgress(task.id)?.currentTime || 0)}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </>
                                             )}
                                         </div>
 
@@ -464,9 +675,66 @@ export default function HistoryPage() {
                                                         <span>{formatDate(task.createdAt)}</span>
                                                     </div>
                                                 </div>
-                                                <h3 className="font-medium text-sm mt-2 line-clamp-2 leading-tight group-hover:text-primary transition-colors">
-                                                    {task.audioMeta?.title || "未命名任务"}
-                                                </h3>
+                                                {/* Title with description tooltip */}
+                                                <Tooltip
+                                                    title={getDescription(task.id) || null}
+                                                    placement="top"
+                                                    overlayStyle={{ maxWidth: 300 }}
+                                                    overlayInnerStyle={{
+                                                        whiteSpace: 'pre-wrap',
+                                                        fontSize: '12px',
+                                                        padding: '8px 12px'
+                                                    }}
+                                                >
+                                                    {editingTitleTaskId === task.id ? (
+                                                        <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                                            <input
+                                                                type="text"
+                                                                value={editingTitle}
+                                                                onChange={(e) => setEditingTitle(e.target.value)}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter') {
+                                                                        handleSaveTitle(e as any, task.id);
+                                                                    } else if (e.key === 'Escape') {
+                                                                        handleCancelEditTitle(e as any);
+                                                                    }
+                                                                }}
+                                                                className="flex-1 px-2 py-1 text-sm border border-primary/50 rounded focus:outline-none focus:ring-1 focus:ring-primary/50 bg-background"
+                                                                autoFocus
+                                                            />
+                                                            <button
+                                                                onClick={(e) => handleSaveTitle(e, task.id)}
+                                                                className="p-1 hover:bg-primary/10 rounded transition-colors"
+                                                                title="保存"
+                                                            >
+                                                                <Check size={16} className="text-green-500" />
+                                                            </button>
+                                                            <button
+                                                                onClick={handleCancelEditTitle}
+                                                                className="p-1 hover:bg-primary/10 rounded transition-colors"
+                                                                title="取消"
+                                                            >
+                                                                <X size={16} className="text-red-500" />
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex items-center gap-2 mt-2 group/title">
+                                                            <h3 className="flex-1 font-medium text-sm line-clamp-2 leading-tight group-hover:text-primary transition-colors">
+                                                                {getDescription(task.id) && (
+                                                                    <FileText size={12} className="inline-block mr-1 text-primary/70" />
+                                                                )}
+                                                                {task.audioMeta?.title || "未命名任务"}
+                                                            </h3>
+                                                            <button
+                                                                onClick={(e) => handleStartEditTitle(e, task)}
+                                                                className="opacity-0 group-hover/title:opacity-100 p-1 hover:bg-primary/10 rounded transition-all"
+                                                                title="编辑标题"
+                                                            >
+                                                                <Pencil size={14} className="text-muted-foreground hover:text-primary" />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </Tooltip>
                                             </div>
 
                                             <div className="flex items-center justify-between mt-2">
@@ -490,45 +758,80 @@ export default function HistoryPage() {
                                         </div>
                                     </div>
 
-                                    {/* Delete Button (Hover only) */}
-                                    <button
-                                        onClick={(e) => handleDelete(e, task.id)}
-                                        className="absolute top-3 right-3 p-1.5 rounded-lg bg-red-500/10 text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500 hover:text-white"
-                                        title="删除"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
+                                    {/* Action Buttons (Hover only) */}
+                                    <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                        <button
+                                            onClick={(e) => handleAddToQueue(e, task)}
+                                            className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground transition-all"
+                                            title="加入播放列表"
+                                        >
+                                            <ListPlus size={14} />
+                                        </button>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingTaskId(task.id);
+                                            }}
+                                            className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground transition-all"
+                                            title="编辑说明"
+                                        >
+                                            <FileText size={14} />
+                                        </button>
+                                        <button
+                                            onClick={(e) => handleDelete(e, task.id)}
+                                            className="p-1.5 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                                            title="删除"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
                                 </motion.div>
                             ))}
                         </AnimatePresence>
                     </div>
                 )}
             </div>
-            {sortedTasks.length > 0 && (
-                <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-                    <div>
-                        第 {currentPage} / {totalPages} 页 · 每页 {PAGE_SIZE} 条
+            {
+                sortedTasks.length > 0 && (
+                    <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
+                        <div>
+                            第 {currentPage} / {totalPages} 页 · 每页 {PAGE_SIZE} 条
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                                disabled={currentPage <= 1}
+                                className="px-3 py-1.5 rounded-lg border border-border/50 bg-card/30 text-xs text-muted-foreground disabled:opacity-50"
+                            >
+                                上一页
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                                disabled={currentPage >= totalPages}
+                                className="px-3 py-1.5 rounded-lg border border-border/50 bg-card/30 text-xs text-muted-foreground disabled:opacity-50"
+                            >
+                                下一页
+                            </button>
+                        </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                            disabled={currentPage <= 1}
-                            className="px-3 py-1.5 rounded-lg border border-border/50 bg-card/30 text-xs text-muted-foreground disabled:opacity-50"
-                        >
-                            上一页
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                            disabled={currentPage >= totalPages}
-                            className="px-3 py-1.5 rounded-lg border border-border/50 bg-card/30 text-xs text-muted-foreground disabled:opacity-50"
-                        >
-                            下一页
-                        </button>
-                    </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+
+            {/* Description Editor Modal */}
+            <DescriptionEditor
+                isOpen={!!editingTaskId}
+                onClose={() => setEditingTaskId(null)}
+                title={editingTask?.audioMeta?.title || "未命名任务"}
+                initialValue={editingTaskId ? getDescription(editingTaskId) : ""}
+                onSave={(description) => {
+                    if (editingTaskId) {
+                        setDescription(editingTaskId, description);
+                        toast.success(description ? "说明已保存" : "说明已清除");
+                    }
+                }}
+            />
+        </div >
     );
 }

@@ -1,13 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Outlet, useLocation } from "react-router-dom";
 import { ThemeProvider } from "../ui/theme-provider";
+import { AppSidebar } from "./AppSidebar";
 
 export function AppLayout() {
     const location = useLocation();
 
     return (
         <ThemeProvider defaultTheme="dark" storageKey="bilinote-theme">
-            <div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground selection:bg-primary/30">
+            <div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground selection:bg-primary/30 flex">
 
                 {/* Background Ambient Gradients */}
                 <div className="fixed inset-0 z-0 pointer-events-none">
@@ -15,10 +16,11 @@ export function AppLayout() {
                     <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-secondary/20 blur-[120px] rounded-full mix-blend-screen opacity-50" />
                 </div>
 
-                {/* Content Shell */}
-                <div className="relative z-10 flex flex-col h-screen">
-                    {/* Header / Nav could go here if needed globally */}
+                {/* Sidebar */}
+                <AppSidebar />
 
+                {/* Content Shell */}
+                <div className="relative z-10 flex-1 flex flex-col h-screen overflow-hidden">
                     <AnimatePresence mode="wait">
                         <motion.div
                             key={location.pathname}

@@ -78,6 +78,7 @@ interface TaskStore {
   currentTaskId: string | null
   addPendingTask: (taskId: string, platform: string, formData: TaskFormData) => void
   updateTaskContent: (id: string, data: Partial<Omit<Task, 'id' | 'createdAt'>>) => void
+  updateTaskTitle: (id: string, title: string) => void
   removeTask: (id: string) => void
   clearTasks: () => void
   setCurrentTask: (taskId: string | null) => void
@@ -171,6 +172,20 @@ export const useTaskStore = create<TaskStore>()(
           }),
         })),
 
+
+      updateTaskTitle: (id, title) =>
+        set(state => ({
+          tasks: state.tasks.map(task => {
+            if (task.id !== id) return task
+            return {
+              ...task,
+              audioMeta: {
+                ...task.audioMeta,
+                title,
+              },
+            }
+          }),
+        })),
 
       getCurrentTask: () => {
         const currentTaskId = get().currentTaskId

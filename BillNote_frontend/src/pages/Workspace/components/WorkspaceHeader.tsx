@@ -1,5 +1,4 @@
-import { useNavigate, useLocation } from "react-router-dom";
-import { ArrowLeft, Sparkles, RefreshCw, ChevronDown, Copy, Check, Tag, X, Pencil } from "lucide-react";
+import { Sparkles, RefreshCw, ChevronDown, Copy, Check, Tag, X, Pencil } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useProviderStore } from "@/store/providerStore";
 import { useModelStore } from "@/store/modelStore";
@@ -17,9 +16,6 @@ interface WorkspaceHeaderProps {
 }
 
 export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, copied }: WorkspaceHeaderProps) {
-    const navigate = useNavigate();
-    const location = useLocation();
-    const backPath = location.state?.from || "/";
     const [showRetryOptions, setShowRetryOptions] = useState(false);
 
     const videoKey = useMemo(() => {
@@ -110,9 +106,6 @@ export default function WorkspaceHeader({ task, statusInfo, onRetry, onCopy, cop
     return (
         <header className="h-14 border-b border-border/50 flex items-center justify-between px-4 bg-background/50 backdrop-blur-md z-20">
             <div className="flex items-center gap-3">
-                <button onClick={() => navigate(backPath)} className="p-2 hover:bg-muted rounded-full transition-colors">
-                    <ArrowLeft size={18} className="text-muted-foreground" />
-                </button>
                 <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center text-primary">
                     <Sparkles size={18} />
                 </div>

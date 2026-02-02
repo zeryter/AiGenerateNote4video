@@ -188,6 +188,7 @@ export default function WorkspacePage() {
                     <Panel defaultSize={50} minSize={30}>
                         <div className="h-full w-full p-4 flex flex-col gap-4">
                             <VideoPlayerPanel
+                                key={task.id}
                                 task={task}
                                 videoRef={videoRef}
                                 reactPlayerRef={reactPlayerRef}

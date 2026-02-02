@@ -94,3 +94,15 @@ export const getAllTasks = async () => {
     return []
   }
 }
+
+export const updateTaskTitle = async (task_id: string, title: string) => {
+  try {
+    const res = await request.post('/update_task_title', { task_id, title })
+    toast.success('标题更新成功')
+    return res
+  } catch (error: unknown) {
+    toast.error('标题更新失败')
+    console.error('❌ 更新标题失败:', error)
+    throw error
+  }
+}
